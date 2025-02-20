@@ -7,6 +7,9 @@ import base64
 import hashlib
 import hmac
 import urllib
+from langchain_community.chat_models  import ChatOpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.schema import HumanMessage, SystemMessage
 
 # 讯飞API配置
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
@@ -100,6 +103,127 @@ def content_to_file(content, output_file_path):
             f.write(lines)
 
 
+def analyze_conversation(conversation_text: str):
+    """
+    分析通话记录并提供改进建议
+    """
+    # 首先格式化对话文本
+    formatted_text = format_conversation(conversation_text)
+    
+    # 配置OpenAI API
+    llm = ChatOpenAI(
+        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
+        openai_api_base="https://openai.weavex.tech/v1",
+        model_name="deepseek-r1",
+        temperature=0.7
+    )
+    
+    # 优化后的系统提示词
+    system_prompt = """
+    你是一位专业的销售通话分析专家。这是一段销售人员与客户的对话记录，请从以下几个维度进行深入分析：
+
+    1. 整体评分（满分100分）：
+       - 开场白表现（20分）
+       - 需求挖掘（20分）
+       - 产品介绍（20分）
+       - 异议处理（20分）
+       - 成交技巧（20分）
+
+    2. 详细分析：
+       a) 对话节奏与互动
+          - 销售节奏控制
+          - 倾听与回应质量
+          - 话语权把控
+       
+       b) 销售技巧应用
+          - SPIN技巧运用
+          - 价值展示能力
+          - 促成交技巧
+       
+       c) 客户意向识别
+          - 客户兴趣点
+          - 购买意愿强度
+          - 决策影响因素
+
+    3. 具体改进建议：
+       - 至少3个可立即执行的改进点
+       - 建议的话术示例
+       - 后续跟进建议
+
+    请用简洁专业的语言进行分析，并突出关键发现。
+    """
+    
+    # 创建提示模板
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"以下是需要分析的通话记录：\n\n{formatted_text}")
+    ])
+    
+    try:
+        response = llm(prompt.format_messages())
+        return {
+            "status": "success",
+            "analysis": response.content,
+            "formatted_text": formatted_text  # 同时返回格式化后的文本
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "message": f"分析过程中出现错误: {str(e)}"
+        }
+
+
+def format_conversation(raw_text: str) -> str:
+    """
+    将原始的spk标记文本转换为更规范的对话格式
+    
+    Args:
+        raw_text (str): 原始的带spk标记的文本
+    
+    Returns:
+        str: 格式化后的对话文本
+    """
+    lines = raw_text.strip().split('\n')
+    formatted_lines = []
+    current_speaker = None
+    current_content = []
+    
+    for line in lines:
+        if not line.strip():
+            continue
+            
+        if '##' not in line:
+            continue
+            
+        speaker, content = line.split('##')
+        content = content.strip()
+        
+        # 跳过空内容
+        if not content:
+            continue
+            
+        # 如果是数字编号开头，跳过
+        if content.strip().replace('、', '').isdigit():
+            continue
+            
+        # 转换speaker标记为更友好的形式
+        speaker = '客户' if speaker == 'spk2' else '销售'
+        
+        if speaker == current_speaker:
+            current_content.append(content)
+        else:
+            if current_speaker and current_content:
+                formatted_lines.append(f"{current_speaker}：{''.join(current_content)}")
+            current_speaker = speaker
+            current_content = [content]
+    
+    # 处理最后一组对话
+    if current_speaker and current_content:
+        formatted_lines.append(f"{current_speaker}：{''.join(current_content)}")
+    
+    return '\n\n'.join(formatted_lines)
+
+
 # Streamlit界面
 st.set_page_config(
     page_title="分析通话记录Demo📞",
@@ -142,8 +266,41 @@ if uploaded_files:
                     # 输出到文件
                     output_file_path = f"{uploaded_file.name}_output.txt"
                     content_to_file(content, output_file_path)
-
-                    st.success(f"分析完成，结果已保存为: {output_file_path}")
+                    
+                    # 读取文件内容进行分析
+                    with open(output_file_path, 'r', encoding='utf-8') as f:
+                        conversation_text = f.read()
+                    
+                    # 调用大模型进行分析
+                    analysis_result = analyze_conversation(conversation_text)
+                    
+                    if analysis_result["status"] == "success":
+                        st.success(f"文件转写和分析已完成！")
+                        
+                        # 使用tabs来组织内容
+                        tab1, tab2 = st.tabs(["📝 对话记录", "📊 分析结果"])
+                        
+                        with tab1:
+                            st.markdown("### 通话记录")
+                            st.markdown(analysis_result["formatted_text"])
+                        
+                        with tab2:
+                            st.markdown("### 🔍 通话分析结果")
+                            st.markdown(analysis_result["analysis"])
+                        
+                        # 下载按钮
+                        st.download_button(
+                            label="📥 下载完整分析报告",
+                            data=f"通话记录：\n\n{analysis_result['formatted_text']}\n\n分析结果：\n\n{analysis_result['analysis']}",
+                            file_name=f"{uploaded_file.name}_analysis_report.txt",
+                            mime="text/plain"
+                        )
+                    else:
+                        st.error(f"分析过程出现错误：{analysis_result['message']}")
+                        st.success(f"仅完成文件转写，结果已保存为: {output_file_path}")
+                        
+                    # 删除临时文件
+                    os.remove(f"./temp_{uploaded_file.name}")
                 else:
                     st.error("未能成功获取转写结果！")
             else:
