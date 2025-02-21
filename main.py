@@ -2,14 +2,19 @@ import streamlit as st
 import os
 import json
 import time
-import requests
 import base64
 import hashlib
 import hmac
 import urllib
-from langchain_community.chat_models  import ChatOpenAI
+import asyncio
+import aiohttp
+import logging
+from typing import List, Dict
+from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
+# 配置日志输出
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
 
 # 讯飞API配置
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
@@ -31,14 +36,12 @@ def get_signa(appid, secret_key, ts):
     return signa
 
 
-# 上传文件到讯飞API
-def upload_file_to_xunfei(upload_file_path):
+async def upload_file_async(session: aiohttp.ClientSession, file_path: str) -> Dict:
+    """异步上传单个文件"""
     ts = str(int(time.time()))
     signa = get_signa(appid, secret_key, ts)
-
-    file_len = os.path.getsize(upload_file_path)
-    file_name = os.path.basename(upload_file_path)
-
+    file_len = os.path.getsize(file_path)
+    file_name = os.path.basename(file_path)
     param_dict = {
         'appId': appid,
         'signa': signa,
@@ -49,20 +52,28 @@ def upload_file_to_xunfei(upload_file_path):
         'roleNum': 2,
         'roleType': 1
     }
+    url = lfasr_host + api_upload + "?" + urllib.parse.urlencode(param_dict)
+    with open(file_path, 'rb') as f:
+        data = f.read()
+    async with session.post(url, headers={"Content-type": "application/json"}, data=data) as response:
+        result = await response.json()
+        logging.debug(f"上传文件 {file_name} 返回结果：{result}")
+        return {"file_path": file_path, "result": result}
 
-    data = open(upload_file_path, 'rb').read(file_len)
 
-    response = requests.post(url=lfasr_host + api_upload + "?" + urllib.parse.urlencode(param_dict),
-                             headers={"Content-type": "application/json"}, data=data)
-    result = json.loads(response.text)
-    return result
+async def upload_files_async(file_paths: List[str]) -> List[Dict]:
+    """并发上传多个文件"""
+    async with aiohttp.ClientSession() as session:
+        tasks = [upload_file_async(session, file_path) for file_path in file_paths]
+        return await asyncio.gather(*tasks)
 
 
-# 获取转写结果
-def get_transcription_result(orderId):
+async def get_transcription_result_async(orderId: str) -> Dict:
+    """
+    异步获取转写结果
+    """
     ts = str(int(time.time()))
     signa = get_signa(appid, secret_key, ts)
-
     param_dict = {
         'appId': appid,
         'signa': signa,
@@ -70,21 +81,22 @@ def get_transcription_result(orderId):
         'orderId': orderId,
         'resultType': "transfer,predict"
     }
-
+    url = lfasr_host + api_get_result + "?" + urllib.parse.urlencode(param_dict)
     status = 3
-    while status == 3:
-        response = requests.post(url=lfasr_host + api_get_result + "?" + urllib.parse.urlencode(param_dict),
-                                 headers={"Content-type": "application/json"})
-        result = json.loads(response.text)
-        status = result['content']['orderInfo']['status']
-        if status == 4:
-            break
-        time.sleep(5)
+    async with aiohttp.ClientSession() as session:
+        while status == 3:
+            async with session.post(url, headers={"Content-type": "application/json"}) as response:
+                result = await response.json()
+            status = result['content']['orderInfo']['status']
+            logging.debug(f"转写API调用返回状态: {status} (orderId: {orderId})")
+            if status == 4:
+                break
+            await asyncio.sleep(5)
     return result
 
 
-# 规范化JSON文件为可读文本
 def merge_result_for_one_vad(result_vad):
+    """规范化JSON文件为可读文本"""
     content = []
     for rt_dic in result_vad['st']['rt']:
         spk_str = 'spk' + str(3 - int(result_vad['st']['rl'])) + '##'
@@ -97,42 +109,27 @@ def merge_result_for_one_vad(result_vad):
     return content
 
 
-def content_to_file(content, output_file_path):
-    with open(output_file_path, 'w', encoding='utf-8') as f:
-        for lines in content:
-            f.write(lines)
-
-
 def identify_roles(raw_text: str) -> dict:
     """
     使用LLM识别对话中的角色
-
-    Args:
-        raw_text (str): 原始的带spk标记的文本
-
-    Returns:
-        dict: 角色映射关系，如 {'spk1': '销售', 'spk2': '客户'}
     """
-    # 提取前几轮对话用于角色判断
     lines = raw_text.strip().split('\n')
-    sample_dialogue = '\n'.join(lines[:10])  # 取前10行进行分析
-
+    sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
         openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
         openai_api_base="https://openai.weavex.tech/v1",
         model_name="gpt-4o",
-        temperature=0.2  # 降低温度以获得更确定的答案
+        temperature=0.2
     )
-
     system_prompt = """
     你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
-    
+
     判断依据：
     1. 说话方式和语气（销售通常更主动、更正式）
     2. 提问方式（销售倾向于引导性提问）
     3. 专业术语的使用（销售更可能使用专业术语）
     4. 信息获取方向（销售倾向于获取客户需求信息）
-    
+
     请只返回如下格式的JSON：
     {
         "spk1": "销售/客户",
@@ -140,18 +137,15 @@ def identify_roles(raw_text: str) -> dict:
         "confidence": "high/medium/low"
     }
     """
-
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"对话内容：\n\n{sample_dialogue}")
     ])
-
     try:
         response = llm(prompt.format_messages())
         roles = json.loads(response.content)
         return roles
     except Exception as e:
-        # 如果识别失败，返回默认映射
         return {
             "spk1": "未知角色1",
             "spk2": "未知角色2",
@@ -162,45 +156,32 @@ def identify_roles(raw_text: str) -> dict:
 def format_conversation(raw_text: str) -> tuple:
     """
     将原始的spk标记文本转换为更规范的对话格式
-
-    Returns:
-        tuple: (formatted_text, roles_info)
     """
-    # 首先识别角色
     roles = identify_roles(raw_text)
-
     lines = raw_text.strip().split('\n')
     formatted_lines = []
     current_speaker = None
     current_content = []
-
     for line in lines:
         if not line.strip() or '##' not in line:
             continue
-
         speaker, content = line.split('##')
         content = content.strip()
-
         if not content or content.strip().replace('、', '').isdigit():
             continue
-
-        # 使用识别出的角色
         speaker_role = roles.get(speaker, f"未知角色{speaker[-1]}")
-
         if speaker == current_speaker:
             current_content.append(content)
         else:
             if current_speaker and current_content:
-                formatted_lines.append(f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
+                formatted_lines.append(
+                    f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
             current_speaker = speaker
             current_content = [content]
-
-    # 处理最后一组对话
     if current_speaker and current_content:
-        formatted_lines.append(f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
-
+        formatted_lines.append(
+            f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
     formatted_text = '\n\n'.join(formatted_lines)
-
     return formatted_text, roles
 
 
@@ -208,20 +189,15 @@ def analyze_conversation(conversation_text: str):
     """
     分析通话记录并提供改进建议
     """
-    # 格式化对话文本并获取角色信息
     formatted_text, roles = format_conversation(conversation_text)
-
-    # 如果角色识别可信度低，在分析结果中提醒
     confidence_warning = ""
     if roles.get("confidence", "low") == "low":
         confidence_warning = "\n\n 注意：系统对说话者角色的识别可信度较低，请人工核实。"
-
-    # 调整system prompt，加入角色信息
     system_prompt = f"""
     你是一位专业的销售通话分析专家。这是一段对话记录，其中：
     - {roles['spk1']} 的发言以"{roles['spk1']}："开头
     - {roles['spk2']} 的发言以"{roles['spk2']}："开头
-    
+
     请从以下几个维度进行深入分析：
     1. 整体评分（满分100分）：
        - 开场白表现（20分）
@@ -235,12 +211,12 @@ def analyze_conversation(conversation_text: str):
           - 销售节奏控制
           - 倾听与回应质量
           - 话语权把控
-       
+
        b) 销售技巧应用
           - SPIN技巧运用
           - 价值展示能力
           - 促成交技巧
-       
+
        c) 客户意向识别
           - 客户兴趣点
           - 购买意愿强度
@@ -253,21 +229,16 @@ def analyze_conversation(conversation_text: str):
 
     请用简洁专业的语言进行分析，并突出关键发现。
     """
-
-    # 配置OpenAI API
     llm = ChatOpenAI(
         openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
         openai_api_base="https://openai.weavex.tech/v1",
         model_name="deepseek-r1",
         temperature=0.7
     )
-
-    # 创建提示模板
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"以下是需要分析的通话记录：\n\n{formatted_text}")
     ])
-
     try:
         response = llm(prompt.format_messages())
         return {
@@ -283,12 +254,86 @@ def analyze_conversation(conversation_text: str):
         }
 
 
-# Streamlit界面
-st.set_page_config(
-    page_title="分析通话记录Demo",
-    page_icon="📞"
-)
+async def process_file(upload_result: Dict) -> Dict:
+    """
+    异步处理单个文件：调用转写API、解析结果、保存转写文本并调用LLM进行分析
+    """
+    file_path = upload_result["file_path"]
+    logging.debug(f"开始处理文件 {file_path}")
+    result = upload_result["result"]
+    if 'content' in result and 'orderId' in result['content']:
+        orderId = result['content']['orderId']
+        logging.debug(f"调用转写 API 前，文件 {file_path}，orderId: {orderId}")
+        transcription_result = await get_transcription_result_async(orderId)
+        logging.debug(f"转写 API 返回，文件 {file_path}")
+        if 'content' in transcription_result:
+            try:
+                js_xunfei_result = json.loads(transcription_result['content']['orderResult'])
+            except Exception as e:
+                return {"file_path": file_path, "status": "error", "message": f"解析转写结果失败: {e}"}
+            content = []
+            for result_one_vad_str in js_xunfei_result['lattice']:
+                try:
+                    js_result_one_vad = json.loads(result_one_vad_str['json_1best'])
+                    content.extend(merge_result_for_one_vad(js_result_one_vad))
+                except Exception as e:
+                    logging.error(f"解析单个vad结果错误: {e}")
+            file_name = os.path.basename(file_path)
+            output_file_path = f"{file_name}_output.txt"
+            with open(output_file_path, 'w', encoding='utf-8') as f:
+                for line in content:
+                    f.write(line)
+            with open(output_file_path, 'r', encoding='utf-8') as f:
+                conversation_text = f.read()
+            logging.debug(f"开始调用LLM分析，文件 {file_path}")
+            analysis_result = await asyncio.to_thread(analyze_conversation, conversation_text)
+            logging.debug(f"LLM分析完成，文件 {file_path}")
+            return {
+                "file_path": file_path,
+                "status": "success",
+                "analysis_result": analysis_result,
+                "output_file_path": output_file_path
+            }
+        else:
+            return {"file_path": file_path, "status": "error", "message": "转写结果格式错误"}
+    else:
+        return {"file_path": file_path, "status": "error", "message": "上传失败或返回格式错误"}
 
+
+async def process_all_files(temp_files: List[str], progress_placeholder) -> List[Dict]:
+    """
+    异步处理所有文件：先并发上传，再并发处理转写和分析，每完成一个文件更新进度
+    """
+    progress_bar = progress_placeholder.progress(0)
+    status_text = progress_placeholder.empty()
+    phase_text = progress_placeholder.empty()
+    
+    # 上传文件阶段
+    phase_text.markdown("**📤 正在上传文件...**")
+    logging.debug("开始并发上传文件")
+    upload_results = await upload_files_async(temp_files)
+    logging.debug("完成文件上传")
+    
+    # 处理文件阶段
+    phase_text.markdown("**🔄 正在转写并分析文件...**")
+    tasks = [process_file(upload_result) for upload_result in upload_results]
+    results = []
+    total = len(tasks)
+    count = 0
+    
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        count += 1
+        progress_bar.progress(count / total)
+        status_text.markdown(f"⏳ 已完成 {count}/{total} 个文件")
+        results.append(result)
+    
+    phase_text.markdown("**✅ 所有文件处理完成！**")
+    return results
+
+
+# Streamlit界面
+st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
 st.title("分析通话记录（Demo）📞")
 
 uploaded_files = st.file_uploader(
@@ -303,72 +348,66 @@ if uploaded_files:
         st.write(f"- {file.name}")
 
     if st.button("开始分析"):
-        st.info("文件分析中...")
+        progress_placeholder = st.container()
 
+        # 保存上传的文件到本地临时文件夹
+        temp_files = []
         for uploaded_file in uploaded_files:
-            with open(f"./temp_{uploaded_file.name}", "wb") as f:
+            temp_path = f"./temp_{uploaded_file.name}"
+            with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getbuffer())
+            temp_files.append(temp_path)
 
-            result = upload_file_to_xunfei(f"./temp_{uploaded_file.name}")
-            if 'content' in result and 'orderId' in result['content']:
-                orderId = result['content']['orderId']
-                transcription_result = get_transcription_result(orderId)
-
-                # 处理转写结果
-                if 'content' in transcription_result:
-                    js_xunfei_result = json.loads(transcription_result['content']['orderResult'])
-                    content = []
-                    for result_one_vad_str in js_xunfei_result['lattice']:
-                        js_result_one_vad = json.loads(result_one_vad_str['json_1best'])
-                        content.extend(merge_result_for_one_vad(js_result_one_vad))
-
-                    # 输出到文件
-                    output_file_path = f"{uploaded_file.name}_output.txt"
-                    content_to_file(content, output_file_path)
-
-                    # 读取文件内容进行分析
-                    with open(output_file_path, 'r', encoding='utf-8') as f:
-                        conversation_text = f.read()
-
-                    # 调用大模型进行分析
-                    analysis_result = analyze_conversation(conversation_text)
-
-                    if analysis_result["status"] == "success":
-                        st.success(f"文件转写和分析已完成！")
-
-                        # 使用tabs来组织内容
-                        tab1, tab2 = st.tabs(["📝 对话记录", "📊 分析结果"])
-
-                        with tab1:
-                            # 显示角色识别信息
-                            if analysis_result["roles"].get("confidence") != "high":
-                                st.warning(" 系统对说话者角色的识别可信度不高，请核实。", icon="⚠️")
-
-                            st.markdown("### 对话角色")
+        try:
+            results = asyncio.run(process_all_files(temp_files, progress_placeholder))
+            
+            # 创建两个主要标签页
+            tab1, tab2 = st.tabs(["📝 所有对话记录", "📊 所有分析结果"])
+            
+            with tab1:
+                for idx, res in enumerate(results, 1):
+                    if res["status"] == "success":
+                        analysis_result = res["analysis_result"]
+                        if analysis_result.get("status") == "success":
+                            st.markdown(f"### 📝 对话记录 {idx}")
+                            if analysis_result["roles"].get("confidence", "low") != "high":
+                                st.warning("⚠️ 该对话的角色识别可信度不高，请核实。")
+                            st.markdown(f"**角色说明：**")
                             st.markdown(f"- 说话者1 ({analysis_result['roles']['spk1']})")
                             st.markdown(f"- 说话者2 ({analysis_result['roles']['spk2']})")
-
-                            st.markdown("### 通话记录")
+                            st.markdown("**详细对话：**")
                             st.markdown(analysis_result["formatted_text"])
-
-                        with tab2:
-                            st.markdown("### 🔍 通话分析结果")
+                            st.markdown("---")
+            
+            with tab2:
+                for idx, res in enumerate(results, 1):
+                    if res["status"] == "success":
+                        analysis_result = res["analysis_result"]
+                        if analysis_result.get("status") == "success":
+                            st.markdown(f"### 📊 分析结果 {idx}")
                             st.markdown(analysis_result["analysis"])
+                            st.markdown("---")
+            
+            # 添加批量下载按钮
+            combined_report = ""
+            for idx, res in enumerate(results, 1):
+                if res["status"] == "success" and res["analysis_result"].get("status") == "success":
+                    combined_report += f"\n\n{'='*50}\n对话记录 {idx}：\n{'='*50}\n\n"
+                    combined_report += res["analysis_result"]["formatted_text"]
+                    combined_report += f"\n\n{'='*50}\n分析结果 {idx}：\n{'='*50}\n\n"
+                    combined_report += res["analysis_result"]["analysis"]
+            
+            st.download_button(
+                label="📥 下载完整分析报告",
+                data=combined_report,
+                file_name="complete_analysis_report.txt",
+                mime="text/plain"
+            )
 
-                        # 下载按钮
-                        st.download_button(
-                            label="📥 下载完整分析报告",
-                            data=f"通话记录：\n\n{analysis_result['formatted_text']}\n\n分析结果：\n\n{analysis_result['analysis']}",
-                            file_name=f"{uploaded_file.name}_analysis_report.txt",
-                            mime="text/plain"
-                        )
-                    else:
-                        st.error(f"分析过程出现错误：{analysis_result['message']}")
-                        st.success(f"仅完成文件转写，结果已保存为: {output_file_path}")
-
-                    # 删除临时文件
-                    os.remove(f"./temp_{uploaded_file.name}")
-                else:
-                    st.error("未能成功获取转写结果！")
-            else:
-                st.error("上传文件失败，无法获取订单ID！")
+        except Exception as e:
+            st.error(f"处理过程中出现错误：{str(e)}")
+        finally:
+            # 清理临时文件
+            for temp_file in temp_files:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
