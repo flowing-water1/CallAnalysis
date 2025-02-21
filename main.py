@@ -103,25 +103,126 @@ def content_to_file(content, output_file_path):
             f.write(lines)
 
 
+def identify_roles(raw_text: str) -> dict:
+    """
+    使用LLM识别对话中的角色
+
+    Args:
+        raw_text (str): 原始的带spk标记的文本
+
+    Returns:
+        dict: 角色映射关系，如 {'spk1': '销售', 'spk2': '客户'}
+    """
+    # 提取前几轮对话用于角色判断
+    lines = raw_text.strip().split('\n')
+    sample_dialogue = '\n'.join(lines[:10])  # 取前10行进行分析
+
+    llm = ChatOpenAI(
+        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
+        openai_api_base="https://openai.weavex.tech/v1",
+        model_name="gpt-4o",
+        temperature=0.2  # 降低温度以获得更确定的答案
+    )
+
+    system_prompt = """
+    你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
+    
+    判断依据：
+    1. 说话方式和语气（销售通常更主动、更正式）
+    2. 提问方式（销售倾向于引导性提问）
+    3. 专业术语的使用（销售更可能使用专业术语）
+    4. 信息获取方向（销售倾向于获取客户需求信息）
+    
+    请只返回如下格式的JSON：
+    {
+        "spk1": "销售/客户",
+        "spk2": "销售/客户",
+        "confidence": "high/medium/low"
+    }
+    """
+
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"对话内容：\n\n{sample_dialogue}")
+    ])
+
+    try:
+        response = llm(prompt.format_messages())
+        roles = json.loads(response.content)
+        return roles
+    except Exception as e:
+        # 如果识别失败，返回默认映射
+        return {
+            "spk1": "未知角色1",
+            "spk2": "未知角色2",
+            "confidence": "low"
+        }
+
+
+def format_conversation(raw_text: str) -> tuple:
+    """
+    将原始的spk标记文本转换为更规范的对话格式
+
+    Returns:
+        tuple: (formatted_text, roles_info)
+    """
+    # 首先识别角色
+    roles = identify_roles(raw_text)
+
+    lines = raw_text.strip().split('\n')
+    formatted_lines = []
+    current_speaker = None
+    current_content = []
+
+    for line in lines:
+        if not line.strip() or '##' not in line:
+            continue
+
+        speaker, content = line.split('##')
+        content = content.strip()
+
+        if not content or content.strip().replace('、', '').isdigit():
+            continue
+
+        # 使用识别出的角色
+        speaker_role = roles.get(speaker, f"未知角色{speaker[-1]}")
+
+        if speaker == current_speaker:
+            current_content.append(content)
+        else:
+            if current_speaker and current_content:
+                formatted_lines.append(f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
+            current_speaker = speaker
+            current_content = [content]
+
+    # 处理最后一组对话
+    if current_speaker and current_content:
+        formatted_lines.append(f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
+
+    formatted_text = '\n\n'.join(formatted_lines)
+
+    return formatted_text, roles
+
+
 def analyze_conversation(conversation_text: str):
     """
     分析通话记录并提供改进建议
     """
-    # 首先格式化对话文本
-    formatted_text = format_conversation(conversation_text)
-    
-    # 配置OpenAI API
-    llm = ChatOpenAI(
-        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
-        openai_api_base="https://openai.weavex.tech/v1",
-        model_name="deepseek-r1",
-        temperature=0.7
-    )
-    
-    # 优化后的系统提示词
-    system_prompt = """
-    你是一位专业的销售通话分析专家。这是一段销售人员与客户的对话记录，请从以下几个维度进行深入分析：
+    # 格式化对话文本并获取角色信息
+    formatted_text, roles = format_conversation(conversation_text)
 
+    # 如果角色识别可信度低，在分析结果中提醒
+    confidence_warning = ""
+    if roles.get("confidence", "low") == "low":
+        confidence_warning = "\n\n 注意：系统对说话者角色的识别可信度较低，请人工核实。"
+
+    # 调整system prompt，加入角色信息
+    system_prompt = f"""
+    你是一位专业的销售通话分析专家。这是一段对话记录，其中：
+    - {roles['spk1']} 的发言以"{roles['spk1']}："开头
+    - {roles['spk2']} 的发言以"{roles['spk2']}："开头
+    
+    请从以下几个维度进行深入分析：
     1. 整体评分（满分100分）：
        - 开场白表现（20分）
        - 需求挖掘（20分）
@@ -152,19 +253,28 @@ def analyze_conversation(conversation_text: str):
 
     请用简洁专业的语言进行分析，并突出关键发现。
     """
-    
+
+    # 配置OpenAI API
+    llm = ChatOpenAI(
+        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
+        openai_api_base="https://openai.weavex.tech/v1",
+        model_name="deepseek-r1",
+        temperature=0.7
+    )
+
     # 创建提示模板
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"以下是需要分析的通话记录：\n\n{formatted_text}")
     ])
-    
+
     try:
         response = llm(prompt.format_messages())
         return {
             "status": "success",
             "analysis": response.content,
-            "formatted_text": formatted_text  # 同时返回格式化后的文本
+            "formatted_text": formatted_text,
+            "roles": roles
         }
     except Exception as e:
         return {
@@ -173,60 +283,9 @@ def analyze_conversation(conversation_text: str):
         }
 
 
-def format_conversation(raw_text: str) -> str:
-    """
-    将原始的spk标记文本转换为更规范的对话格式
-    
-    Args:
-        raw_text (str): 原始的带spk标记的文本
-    
-    Returns:
-        str: 格式化后的对话文本
-    """
-    lines = raw_text.strip().split('\n')
-    formatted_lines = []
-    current_speaker = None
-    current_content = []
-    
-    for line in lines:
-        if not line.strip():
-            continue
-            
-        if '##' not in line:
-            continue
-            
-        speaker, content = line.split('##')
-        content = content.strip()
-        
-        # 跳过空内容
-        if not content:
-            continue
-            
-        # 如果是数字编号开头，跳过
-        if content.strip().replace('、', '').isdigit():
-            continue
-            
-        # 转换speaker标记为更友好的形式
-        speaker = '客户' if speaker == 'spk2' else '销售'
-        
-        if speaker == current_speaker:
-            current_content.append(content)
-        else:
-            if current_speaker and current_content:
-                formatted_lines.append(f"{current_speaker}：{''.join(current_content)}")
-            current_speaker = speaker
-            current_content = [content]
-    
-    # 处理最后一组对话
-    if current_speaker and current_content:
-        formatted_lines.append(f"{current_speaker}：{''.join(current_content)}")
-    
-    return '\n\n'.join(formatted_lines)
-
-
 # Streamlit界面
 st.set_page_config(
-    page_title="分析通话记录Demo📞",
+    page_title="分析通话记录Demo",
     page_icon="📞"
 )
 
@@ -266,28 +325,36 @@ if uploaded_files:
                     # 输出到文件
                     output_file_path = f"{uploaded_file.name}_output.txt"
                     content_to_file(content, output_file_path)
-                    
+
                     # 读取文件内容进行分析
                     with open(output_file_path, 'r', encoding='utf-8') as f:
                         conversation_text = f.read()
-                    
+
                     # 调用大模型进行分析
                     analysis_result = analyze_conversation(conversation_text)
-                    
+
                     if analysis_result["status"] == "success":
                         st.success(f"文件转写和分析已完成！")
-                        
+
                         # 使用tabs来组织内容
                         tab1, tab2 = st.tabs(["📝 对话记录", "📊 分析结果"])
-                        
+
                         with tab1:
+                            # 显示角色识别信息
+                            if analysis_result["roles"].get("confidence") != "high":
+                                st.warning(" 系统对说话者角色的识别可信度不高，请核实。", icon="⚠️")
+
+                            st.markdown("### 对话角色")
+                            st.markdown(f"- 说话者1 ({analysis_result['roles']['spk1']})")
+                            st.markdown(f"- 说话者2 ({analysis_result['roles']['spk2']})")
+
                             st.markdown("### 通话记录")
                             st.markdown(analysis_result["formatted_text"])
-                        
+
                         with tab2:
                             st.markdown("### 🔍 通话分析结果")
                             st.markdown(analysis_result["analysis"])
-                        
+
                         # 下载按钮
                         st.download_button(
                             label="📥 下载完整分析报告",
@@ -298,7 +365,7 @@ if uploaded_files:
                     else:
                         st.error(f"分析过程出现错误：{analysis_result['message']}")
                         st.success(f"仅完成文件转写，结果已保存为: {output_file_path}")
-                        
+
                     # 删除临时文件
                     os.remove(f"./temp_{uploaded_file.name}")
                 else:
