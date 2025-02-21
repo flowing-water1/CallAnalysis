@@ -332,6 +332,64 @@ async def process_all_files(temp_files: List[str], progress_placeholder) -> List
     return results
 
 
+def analyze_summary(all_analysis_results: List[Dict]) -> str:
+    """
+    对所有对话的分析结果进行汇总分析
+    """
+    system_prompt = """
+    你是一位专业的销售培训专家。请对多个销售对话的分析结果进行汇总分析。
+    
+    请从以下几个方面进行总结：
+    
+    1. 整体表现评估
+       - 团队整体得分情况
+       - 共同的优势领域
+       - 普遍存在的问题
+    
+    2. 典型案例分析
+       - 最佳实践案例及其可借鉴之处
+       - 典型问题案例及改进建议
+    
+    3. 系统性改进建议
+       - 团队层面的培训重点
+       - 具体的改进行动计划
+       - 话术和技巧的标准化建议
+    
+    4. 数据分析
+       - 各维度得分的统计分析
+       - 成功率和关键影响因素
+       - 绩效改进的量化目标
+    
+    请用清晰的结构和专业的语言进行分析，突出关键发现和可执行的建议。
+    """
+    
+    llm = ChatOpenAI(
+        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
+        openai_api_base="https://openai.weavex.tech/v1",
+        model_name="gpt-4o",
+        temperature=0.7
+    )
+    
+    # 准备所有分析结果的文本
+    all_analyses = []
+    for idx, result in enumerate(all_analysis_results, 1):
+        if result["status"] == "success" and result["analysis_result"].get("status") == "success":
+            all_analyses.append(f"对话 {idx} 的分析结果：\n{result['analysis_result']['analysis']}")
+    
+    combined_analyses = "\n\n".join(all_analyses)
+    
+    prompt = ChatPromptTemplate.from_messages([
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"以下是{len(all_analyses)}个销售对话的分析结果，请进行汇总分析：\n\n{combined_analyses}")
+    ])
+    
+    try:
+        response = llm(prompt.format_messages())
+        return response.content
+    except Exception as e:
+        return f"汇总分析过程中出现错误: {str(e)}"
+
+
 # Streamlit界面
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
 st.title("分析通话记录（Demo）📞")
@@ -361,8 +419,8 @@ if uploaded_files:
         try:
             results = asyncio.run(process_all_files(temp_files, progress_placeholder))
             
-            # 创建两个主要标签页
-            tab1, tab2 = st.tabs(["📝 所有对话记录", "📊 所有分析结果"])
+            # 创建三个主要标签页
+            tab1, tab2, tab3 = st.tabs(["📝 所有对话记录", "📊 所有分析结果", "📈 汇总分析"])
             
             with tab1:
                 for idx, res in enumerate(results, 1):
@@ -388,7 +446,18 @@ if uploaded_files:
                             st.markdown(analysis_result["analysis"])
                             st.markdown("---")
             
-            # 添加批量下载按钮
+            # 添加新的汇总分析标签页
+            with tab3:
+                st.markdown("### 📈 汇总分析报告")
+                
+                # 显示处理中的提示
+                with st.spinner('正在生成汇总分析报告...'):
+                    summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
+                
+                # 显示汇总分析结果
+                st.markdown(summary_analysis)
+            
+            # 修改下载按钮，加入汇总分析
             combined_report = ""
             for idx, res in enumerate(results, 1):
                 if res["status"] == "success" and res["analysis_result"].get("status") == "success":
@@ -396,6 +465,9 @@ if uploaded_files:
                     combined_report += res["analysis_result"]["formatted_text"]
                     combined_report += f"\n\n{'='*50}\n分析结果 {idx}：\n{'='*50}\n\n"
                     combined_report += res["analysis_result"]["analysis"]
+            
+            combined_report += f"\n\n{'='*50}\n汇总分析报告：\n{'='*50}\n\n"
+            combined_report += summary_analysis
             
             st.download_button(
                 label="📥 下载完整分析报告",
