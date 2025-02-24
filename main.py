@@ -389,10 +389,19 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
     except Exception as e:
         return f"汇总分析过程中出现错误: {str(e)}"
 
-
 # Streamlit界面
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
 st.title("分析通话记录（Demo）📞")
+
+# 初始化session state
+if 'analysis_results' not in st.session_state:
+    st.session_state.analysis_results = None
+if 'combined_report' not in st.session_state:
+    st.session_state.combined_report = None
+if 'summary_analysis' not in st.session_state:
+    st.session_state.summary_analysis = None
+if 'analysis_completed' not in st.session_state:
+    st.session_state.analysis_completed = False  # 用来标记分析是否完成
 
 uploaded_files = st.file_uploader(
     "请上传通话录音文件",
@@ -400,7 +409,7 @@ uploaded_files = st.file_uploader(
     accept_multiple_files=True
 )
 
-if uploaded_files:
+if uploaded_files and not st.session_state.analysis_completed:
     st.write("已上传的文件:")
     for file in uploaded_files:
         st.write(f"- {file.name}")
@@ -418,46 +427,13 @@ if uploaded_files:
 
         try:
             results = asyncio.run(process_all_files(temp_files, progress_placeholder))
-            
-            # 创建三个主要标签页
-            tab1, tab2, tab3 = st.tabs(["📝 所有对话记录", "📊 所有分析结果", "📈 汇总分析"])
-            
-            with tab1:
-                for idx, res in enumerate(results, 1):
-                    if res["status"] == "success":
-                        analysis_result = res["analysis_result"]
-                        if analysis_result.get("status") == "success":
-                            st.markdown(f"### 📝 对话记录 {idx}")
-                            if analysis_result["roles"].get("confidence", "low") != "high":
-                                st.warning("⚠️ 该对话的角色识别可信度不高，请核实。")
-                            st.markdown(f"**角色说明：**")
-                            st.markdown(f"- 说话者1 ({analysis_result['roles']['spk1']})")
-                            st.markdown(f"- 说话者2 ({analysis_result['roles']['spk2']})")
-                            st.markdown("**详细对话：**")
-                            st.markdown(analysis_result["formatted_text"])
-                            st.markdown("---")
-            
-            with tab2:
-                for idx, res in enumerate(results, 1):
-                    if res["status"] == "success":
-                        analysis_result = res["analysis_result"]
-                        if analysis_result.get("status") == "success":
-                            st.markdown(f"### 📊 分析结果 {idx}")
-                            st.markdown(analysis_result["analysis"])
-                            st.markdown("---")
-            
-            # 添加新的汇总分析标签页
-            with tab3:
-                st.markdown("### 📈 汇总分析报告")
-                
-                # 显示处理中的提示
-                with st.spinner('正在生成汇总分析报告...'):
-                    summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
-                
-                # 显示汇总分析结果
-                st.markdown(summary_analysis)
-            
-            # 修改下载按钮，加入汇总分析
+            # 保存结果到session state
+            st.session_state.analysis_results = results
+
+            # 生成汇总分析并保存
+            st.session_state.summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
+
+            # 生成完整报告并保存
             combined_report = ""
             for idx, res in enumerate(results, 1):
                 if res["status"] == "success" and res["analysis_result"].get("status") == "success":
@@ -465,16 +441,12 @@ if uploaded_files:
                     combined_report += res["analysis_result"]["formatted_text"]
                     combined_report += f"\n\n{'='*50}\n分析结果 {idx}：\n{'='*50}\n\n"
                     combined_report += res["analysis_result"]["analysis"]
-            
+
             combined_report += f"\n\n{'='*50}\n汇总分析报告：\n{'='*50}\n\n"
-            combined_report += summary_analysis
-            
-            st.download_button(
-                label="📥 下载完整分析报告",
-                data=combined_report,
-                file_name="complete_analysis_report.txt",
-                mime="text/plain"
-            )
+            combined_report += st.session_state.summary_analysis
+            st.session_state.combined_report = combined_report
+
+            st.session_state.analysis_completed = True  # 标记分析完成
 
         except Exception as e:
             st.error(f"处理过程中出现错误：{str(e)}")
@@ -483,3 +455,43 @@ if uploaded_files:
             for temp_file in temp_files:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
+
+# 如果有分析结果，显示标签页和下载按钮
+if st.session_state.analysis_results:
+    tab1, tab2, tab3 = st.tabs(["📝 所有对话记录", "📊 所有分析结果", "📈 汇总分析"])
+
+    with tab1:
+        for idx, res in enumerate(st.session_state.analysis_results, 1):
+            if res["status"] == "success":
+                analysis_result = res["analysis_result"]
+                if analysis_result.get("status") == "success":
+                    st.markdown(f"### 📝 对话记录 {idx}")
+                    if analysis_result["roles"].get("confidence", "low") != "high":
+                        st.warning("⚠️ 该对话的角色识别可信度不高，请核实。")
+                    st.markdown(f"**角色说明：**")
+                    st.markdown(f"- 说话者1 ({analysis_result['roles']['spk1']})")
+                    st.markdown(f"- 说话者2 ({analysis_result['roles']['spk2']})")
+                    st.markdown("**详细对话：**")
+                    st.markdown(analysis_result["formatted_text"])
+                    st.markdown("---")
+
+    with tab2:
+        for idx, res in enumerate(st.session_state.analysis_results, 1):
+            if res["status"] == "success":
+                analysis_result = res["analysis_result"]
+                if analysis_result.get("status") == "success":
+                    st.markdown(f"### 📊 分析结果 {idx}")
+                    st.markdown(analysis_result["analysis"])
+                    st.markdown("---")
+
+    with tab3:
+        st.markdown("### 📈 汇总分析报告")
+        st.markdown(st.session_state.summary_analysis)
+
+    # 下载按钮
+    st.download_button(
+        label="📥 下载完整分析报告",
+        data=st.session_state.combined_report,
+        file_name="complete_analysis_report.md",
+        mime="text/plain"
+    )
