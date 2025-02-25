@@ -13,6 +13,10 @@ from typing import List, Dict
 from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
+import pandas as pd
+from io import BytesIO
+import re
+import openpyxl
 # 配置日志输出
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
 
@@ -239,8 +243,8 @@ def analyze_conversation(conversation_text: str):
     完成所有标准评估后：
     1. 计算总分（满分 100 分）
     2. 在【总结】标签中：
-        - 指出 2 个最关键改进点
-        - 每个改进点包含：
+        - 指出 1 个最关键改进点
+        - 改进点包含：
             * 问题描述（20 字内）
             * 具体建议（30 字内）
             * 示范话术（可选）
@@ -274,10 +278,7 @@ def analyze_conversation(conversation_text: str):
     总结
     1. 改进点：[问题]
        建议：[方案] 
-       示例：[引用对话记录的话术修改]
-    2. 改进点：[问题] 
-       建议：[方案] 
-       示例：[引用对话记录的话术修改]
+       示例：[引用对话记录的话术进行修改]
 
     
     请确保：
@@ -476,6 +477,13 @@ if 'summary_analysis' not in st.session_state:
     st.session_state.summary_analysis = None
 if 'analysis_completed' not in st.session_state:
     st.session_state.analysis_completed = False  # 用来标记分析是否完成
+if 'contact_person' not in st.session_state:
+    st.session_state.contact_person = ""  # 用于存储联系人信息
+
+# 添加联系人输入框
+contact_person = st.text_input("请输入本次对接客户的联系人", value=st.session_state.contact_person)
+if contact_person != st.session_state.contact_person:
+    st.session_state.contact_person = contact_person
 
 uploaded_files = st.file_uploader(
     "请上传通话录音文件",
@@ -562,10 +570,70 @@ if st.session_state.analysis_results:
         st.markdown("### 📈 汇总分析报告")
         st.markdown(st.session_state.summary_analysis)
 
-    # 下载按钮
-    st.download_button(
-        label="📥 下载完整分析报告",
-        data=st.session_state.combined_report,
-        file_name="complete_analysis_report.md",
-        mime="text/plain"
-    )
+    # 下载按钮区域
+    col1, col2 = st.columns(2)
+    with col1:
+        st.download_button(
+            label="📥 下载完整分析报告",
+            data=st.session_state.combined_report,
+            file_name="complete_analysis_report.md",
+            mime="text/plain"
+        )
+    
+    with col2:
+        # 处理Excel文件并提供下载
+        def generate_excel_report():
+            try:
+                # 使用openpyxl直接加载模板文件以保留原格式
+                workbook = openpyxl.load_workbook("电话开拓分析表.xlsx")
+                worksheet = workbook.active
+                
+                # 获取上传文件的名称，并去除可能的"temp_"前缀
+                file_names = []
+                for res in st.session_state.analysis_results:
+                    if res["status"] == "success":
+                        # 获取文件名并去除扩展名
+                        file_name = os.path.basename(res["file_path"])
+                        # 去除temp_前缀
+                        file_name = re.sub(r'^temp_', '', file_name)
+                        # 去除扩展名
+                        file_name = os.path.splitext(file_name)[0]
+                        file_names.append(file_name)
+                
+                # 获取客户名称和联系人所在列
+                customer_col = None
+                contact_col = None
+                for col in range(1, worksheet.max_column + 1):
+                    if worksheet.cell(1, col).value == "客户名称":
+                        customer_col = col
+                    elif worksheet.cell(1, col).value == "联系人":
+                        contact_col = col
+                
+                # 填充客户名称和联系人
+                if customer_col and contact_col:
+                    for i, name in enumerate(file_names):
+                        row = i + 2  # 从第2行开始（第1行是标题）
+                        if row <= worksheet.max_row:
+                            worksheet.cell(row, customer_col).value = name
+                            worksheet.cell(row, contact_col).value = st.session_state.contact_person
+                
+                # 创建BytesIO对象，将Excel写入内存
+                output = BytesIO()
+                workbook.save(output)
+                output.seek(0)
+                
+                # 获取BytesIO的内容
+                processed_data = output.getvalue()
+                return processed_data
+            except Exception as e:
+                st.error(f"处理Excel文件时出错: {str(e)}")
+                return None
+        
+        excel_data = generate_excel_report()
+        if excel_data:
+            st.download_button(
+                label="📊 下载电话开拓分析表",
+                data=excel_data,
+                file_name="电话开拓分析表_已填写.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
