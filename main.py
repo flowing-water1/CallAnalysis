@@ -17,6 +17,7 @@ import pandas as pd
 from io import BytesIO
 import re
 import openpyxl
+
 # 配置日志输出
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
 
@@ -24,9 +25,11 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(me
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
 api_upload = '/upload'
 api_get_result = '/getResult'
-appid = "7fd8fde4"
-secret_key = "ce4e08d9f1870b5a45dcedc60e99780f"
+appid = "8d2e895b"
+secret_key = "8d5c02bd69345f504761da6b818b423f"
 
+# appid = "7fd8fde4"
+# secret_key = "ce4e08d9f1870b5a45dcedc60e99780f"
 
 # 请求签名生成
 def get_signa(appid, secret_key, ts):
@@ -120,8 +123,8 @@ def identify_roles(raw_text: str) -> dict:
     lines = raw_text.strip().split('\n')
     sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
-        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
-        openai_api_base="https://openai.weavex.tech/v1",
+        openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
+        openai_api_base="https://api.pumpkinaigc.online/v1",
         model_name="gpt-4o",
         temperature=0.2
     )
@@ -200,12 +203,12 @@ def analyze_conversation(conversation_text: str):
     system_prompt = f"""
     你是一位专业的销售通话分析专家，负责对销售对话进行分析评估。
     以下是对话记录，其中 {roles['spk1']} 的发言以 "{roles['spk1']}：" 开头，{roles['spk2']} 的发言以 "{roles['spk2']}：" 开头。
-    
+
     <角色标识>
     {roles['spk1']}: {{ROLES_SPK1}}
     {roles['spk2']}: {{ROLES_SPK2}}
     </角色标识>
-    
+
     请按照以下评分标准对销售对话进行评估：
     1. 30 秒自我介绍清晰度（30 分）
         - 是否包含公司/个人核心价值
@@ -232,14 +235,14 @@ def analyze_conversation(conversation_text: str):
         - 是否约定具体跟进时间
         - 是否设置价值锚点
         - 是否取得客户承诺
-    
+
     请按以下流程执行分析：
     1. 针对每个评分标准，先在[分析内容]中：
         - 引用对话中的具体语句
         - 分析是否符合标准要求
         - 指出存在/缺失的要素
     2. 在【评分】中给出该标准得分（0 - 满分）
-    
+
     完成所有标准评估后：
     1. 计算总分（满分 100 分）
     2. 在【总结】标签中：
@@ -248,9 +251,9 @@ def analyze_conversation(conversation_text: str):
             * 问题描述（20 字内）
             * 具体建议（30 字内）
             * 示范话术（可选）
-    
+
     以MarkDown格式输出以下内容：
-    
+
     ### 分析
     #### 标准 1 - 自我介绍
     - [分析内容]
@@ -272,26 +275,21 @@ def analyze_conversation(conversation_text: str):
     **评分：6/10**
     #### 总分
     #### 85/100
-    
-    
 
     总结
     1. 改进点：[问题]
        建议：[方案] 
        示例：[引用对话记录的话术进行修改]
 
-    
     请确保：
     - 每个评分都有对话文本支撑
     - 改进建议可立即落地执行
     - 避免主观臆断，仅基于对话事实
     现在开始逐项分析。
-
-
     """
     llm = ChatOpenAI(
-        openai_api_key="sk-gXeRXhgYsLFziprS93D5F6D31eE249D59235739b37Bd20B1",
-        openai_api_base="https://openai.weavex.tech/v1",
+        openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
+        openai_api_base="https://api.pumpkinaigc.online/v1",
         model_name="gpt-4o",
         temperature=0.7
     )
@@ -301,9 +299,13 @@ def analyze_conversation(conversation_text: str):
     ])
     try:
         response = llm(prompt.format_messages())
+        analysis_text = response.content
+        # 利用正则表达式去除链式思考过程（例如包含 Reasoning ... Reasoned for X seconds 的部分）
+        filtered_text = re.sub(r"(>?\s*Reasoning[\s\S]*?Reasoned for \d+\s*seconds\s*)", "", analysis_text,
+                               flags=re.IGNORECASE)
         return {
             "status": "success",
-            "analysis": response.content,
+            "analysis": filtered_text,
             "formatted_text": formatted_text,
             "roles": roles
         }
@@ -363,32 +365,38 @@ async def process_file(upload_result: Dict) -> Dict:
 async def process_all_files(temp_files: List[str], progress_placeholder) -> List[Dict]:
     """
     异步处理所有文件：先并发上传，再并发处理转写和分析，每完成一个文件更新进度
+    进度条划分：
+      上传阶段：0 ~ 0.2
+      文件处理阶段：0.2 ~ 0.8
     """
     progress_bar = progress_placeholder.progress(0)
     status_text = progress_placeholder.empty()
     phase_text = progress_placeholder.empty()
-    
+
     # 上传文件阶段
     phase_text.markdown("**📤 正在上传文件...**")
     logging.debug("开始并发上传文件")
     upload_results = await upload_files_async(temp_files)
     logging.debug("完成文件上传")
-    
+    phase_text.markdown("**📤 上传完成！**")
+    progress_bar.progress(0.2)
+
     # 处理文件阶段
     phase_text.markdown("**🔄 正在转写并分析文件...**")
     tasks = [process_file(upload_result) for upload_result in upload_results]
     results = []
     total = len(tasks)
     count = 0
-    
     for task in asyncio.as_completed(tasks):
         result = await task
         count += 1
-        progress_bar.progress(count / total)
+        progress = 0.2 + 0.6 * (count / total)
+        progress_bar.progress(progress)
         status_text.markdown(f"⏳ 已完成 {count}/{total} 个文件")
         results.append(result)
-    
-    phase_text.markdown("**✅ 所有文件处理完成！**")
+
+    phase_text.markdown("**✅ 文件处理完成！**")
+    progress_bar.progress(0.8)
     return results
 
 
@@ -397,7 +405,6 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
     对所有对话的分析结果进行汇总分析
     """
     system_prompt = f"""
-    
     你是一位专业的销售培训专家，需要根据当日销售对话分析报告进行汇总分析，生成一份结构化的销售分析报告。
 
     请按照以下步骤处理数据：
@@ -413,56 +420,54 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
           a) 基于至少3个通话记录的共同问题。
           b) 聚焦可量化的行为改进。
           c) 包含具体的提升方向。
-    
+
     输出要求：
     请在[销售分析报告]标签下输出以下内容，以Markdown形式呈现：
     ### [销售分析报告]
     1. **平均评分**：数值结果
     2. **改进建议**：
         - 每条建议单独列出，问题描述简明（不超过25字），改进措施具体可执行，整体控制在50字左右。
-    
+
     特别注意：
     - 优先处理影响客户转化率的要素。
     - 建议需包含可衡量的行为指标，避免使用模糊性表述。
     - 保持建议间的正交性，不重复覆盖相同维度。
     - 改进建议要可让销售可执行。
-    
+
     ### [销售分析报告]
     1. **平均评分**：[在此填写平均评分]
     2. **改进建议**：
         - [建议1，按照要求格式编写]
         - [建议2，按照要求格式编写]
         - [建议3，按照要求格式编写]
-    
-    
-
     """
-    
+
     llm = ChatOpenAI(
         openai_api_key="f465c1fc-481e-4668-bfa2-ec9187c2f1e4",
         openai_api_base="https://ark.cn-beijing.volces.com/api/v3",
         model_name="deepseek-r1-250120",
         temperature=0.7
     )
-    
+
     # 准备所有分析结果的文本
     all_analyses = []
     for idx, result in enumerate(all_analysis_results, 1):
         if result["status"] == "success" and result["analysis_result"].get("status") == "success":
             all_analyses.append(f"对话 {idx} 的分析结果：\n{result['analysis_result']['analysis']}")
-    
+
     combined_analyses = "\n\n".join(all_analyses)
-    
+
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"以下是{len(all_analyses)}个销售对话的分析结果，请进行汇总分析：\n\n{combined_analyses}")
     ])
-    
+
     try:
         response = llm(prompt.format_messages())
         return response.content
     except Exception as e:
         return f"汇总分析过程中出现错误: {str(e)}"
+
 
 # Streamlit界面
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
@@ -512,19 +517,24 @@ if uploaded_files and not st.session_state.analysis_completed:
             # 保存结果到session state
             st.session_state.analysis_results = results
 
-            # 生成汇总分析并保存
+            # 生成汇总分析并保存，同时更新进度条（汇总分析占 20%）
+            phase_text = progress_placeholder.empty()
+            phase_text.markdown("**🔄 正在生成汇总分析...**")
+            progress_bar = progress_placeholder.progress(0.9)
             st.session_state.summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
+            progress_bar.progress(1.0)
+            phase_text.markdown("**✅ 所有文件处理完成！**")
 
             # 生成完整报告并保存
             combined_report = ""
             for idx, res in enumerate(results, 1):
                 if res["status"] == "success" and res["analysis_result"].get("status") == "success":
-                    combined_report += f"\n\n{'='*50}\n对话记录 {idx}：\n{'='*50}\n\n"
+                    combined_report += f"\n\n{'=' * 50}\n对话记录 {idx}：\n{'=' * 50}\n\n"
                     combined_report += res["analysis_result"]["formatted_text"]
-                    combined_report += f"\n\n{'='*50}\n分析结果 {idx}：\n{'='*50}\n\n"
+                    combined_report += f"\n\n{'=' * 50}\n分析结果 {idx}：\n{'=' * 50}\n\n"
                     combined_report += res["analysis_result"]["analysis"]
 
-            combined_report += f"\n\n{'='*50}\n汇总分析报告：\n{'='*50}\n\n"
+            combined_report += f"\n\n{'=' * 50}\n汇总分析报告：\n{'=' * 50}\n\n"
             combined_report += st.session_state.summary_analysis
             st.session_state.combined_report = combined_report
 
@@ -562,9 +572,14 @@ if st.session_state.analysis_results:
             if res["status"] == "success":
                 analysis_result = res["analysis_result"]
                 if analysis_result.get("status") == "success":
-                    st.markdown(f"### 📊 分析结果 {idx}")
-                    st.markdown(analysis_result["analysis"])
-                    st.markdown("---")
+                    # 获取文件名并去除temp_前缀和扩展名
+                    file_name = os.path.basename(res["file_path"])
+                    file_name = re.sub(r'^temp_', '', file_name)
+                    file_name = os.path.splitext(file_name)[0]
+
+                    with st.expander(f"📊 {file_name} 通话分析"):
+                        st.markdown(analysis_result["analysis"])
+                        st.markdown("---")
 
     with tab3:
         st.markdown("### 📈 汇总分析报告")
@@ -579,7 +594,7 @@ if st.session_state.analysis_results:
             file_name="complete_analysis_report.md",
             mime="text/plain"
         )
-    
+
     with col2:
         # 处理Excel文件并提供下载
         def generate_excel_report():
@@ -587,48 +602,175 @@ if st.session_state.analysis_results:
                 # 使用openpyxl直接加载模板文件以保留原格式
                 workbook = openpyxl.load_workbook("电话开拓分析表.xlsx")
                 worksheet = workbook.active
-                
+
                 # 获取上传文件的名称，并去除可能的"temp_"前缀
                 file_names = []
+                analysis_data = []
+
                 for res in st.session_state.analysis_results:
-                    if res["status"] == "success":
-                        # 获取文件名并去除扩展名
+                    if res["status"] == "success" and res["analysis_result"].get("status") == "success":
                         file_name = os.path.basename(res["file_path"])
-                        # 去除temp_前缀
                         file_name = re.sub(r'^temp_', '', file_name)
-                        # 去除扩展名
                         file_name = os.path.splitext(file_name)[0]
                         file_names.append(file_name)
-                
-                # 获取客户名称和联系人所在列
-                customer_col = None
-                contact_col = None
+
+                        analysis_text = res["analysis_result"]["analysis"]
+                        score = ""
+                        score_patterns = [
+                            r'总分\s*\n\s*####\s*(\d+)/100',
+                            r'总分\s*\n\s*总分：\s*(\d+)/100',
+                            r'总分\s*\n\s*(\d+)/100',
+                            r'总分：\s*(\d+)/100',
+                            r'总分\s*(\d+)/100',
+                            r'总分：?\s*(\d+)',
+                            r'####\s*总分\s*\n\s*\*\*(\d+)/100\*\*',
+                            r'总分\s*\n\s*\*\*(\d+)/100\*\*',
+                            r'\*\*(\d+)/100\*\*',
+                            r'总分\s*\n\s*(\d+)'
+                        ]
+
+                        for pattern in score_patterns:
+                            score_match = re.search(pattern, analysis_text)
+                            if score_match:
+                                score = score_match.group(1)
+                                break
+
+                        if not score:
+                            general_score_match = re.search(r'(\d+)/100', analysis_text)
+                            if general_score_match:
+                                score = general_score_match.group(1)
+
+                        suggestion = ""
+                        suggestion_patterns = [
+                            r'建议：\s*(.+?)(?:\n|$)',
+                            r'建议：\s*\*\*(.+?)\*\*',
+                            r'建议：\s*(.+?)\*\*',
+                            r'建议：\s*(.+)',
+                            r'改进点：.+?\n\s*建议：\s*(.+?)(?:\n|$)',
+                            r'\*\*建议\*\*：\s*(.+?)(?:\n|$)',
+                            r'\*\*建议\*\*：\s*(.+)',
+                            r'总结\s*\n\s*\d+\.\s*改进点.+?\n\s*建议：\s*(.+?)(?:\n|$)',
+                            r'总结\s*\n\s*\d+\.\s*改进点.+?\n\s*\*\*建议\*\*：\s*(.+?)(?:\n|$)',
+                            r'总结\s*\n\s*\d+\.\s*改进点：.+?\n\s*- \*\*建议\*\*：\s*(.+?)(?:\n|$)',
+                            r'总结\s*\n\s*\d+\.\s*改进点：.+?\n\s*- 建议：\s*(.+?)(?:\n|$)',
+                            r'建议\s*(.+?)(?:\n|$)'
+                        ]
+
+                        for pattern in suggestion_patterns:
+                            suggestion_match = re.search(pattern, analysis_text)
+                            if suggestion_match:
+                                suggestion = suggestion_match.group(1).strip()
+                                suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
+                                suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
+                                break
+
+                        if not suggestion:
+                            summary_section = re.search(r'总结.*?(?:\n|$)(.*?)(?=##|\Z)', analysis_text, re.DOTALL)
+                            if summary_section:
+                                summary_text = summary_section.group(1)
+                                dash_content = re.search(r'-\s*(.+?)(?:\n|$)', summary_text)
+                                if dash_content:
+                                    suggestion = dash_content.group(1).strip()
+                                    suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
+                                    suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
+
+                        if not suggestion:
+                            summary_match = re.search(r'总结.*?(?:\n|$)(.*?)(?=\n\n|\Z)', analysis_text, re.DOTALL)
+                            if summary_match:
+                                first_sentence = re.search(r'[^.!?。！？]+[.!?。！？]', summary_match.group(1))
+                                if first_sentence:
+                                    suggestion = first_sentence.group(0).strip()
+                                    suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
+                                    suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
+
+                        analysis_data.append({"score": score, "suggestion": suggestion})
+
+                column_indices = {}
                 for col in range(1, worksheet.max_column + 1):
-                    if worksheet.cell(1, col).value == "客户名称":
-                        customer_col = col
-                    elif worksheet.cell(1, col).value == "联系人":
-                        contact_col = col
-                
-                # 填充客户名称和联系人
-                if customer_col and contact_col:
-                    for i, name in enumerate(file_names):
-                        row = i + 2  # 从第2行开始（第1行是标题）
-                        if row <= worksheet.max_row:
-                            worksheet.cell(row, customer_col).value = name
-                            worksheet.cell(row, contact_col).value = st.session_state.contact_person
-                
-                # 创建BytesIO对象，将Excel写入内存
+                    header = worksheet.cell(1, col).value
+                    if header:
+                        column_indices[header] = col
+
+                for i, (name, data) in enumerate(zip(file_names, analysis_data)):
+                    row = i + 2
+                    if row <= worksheet.max_row:
+                        if "客户名称" in column_indices:
+                            worksheet.cell(row, column_indices["客户名称"]).value = name
+                        if "联系人" in column_indices:
+                            worksheet.cell(row, column_indices["联系人"]).value = st.session_state.contact_person
+
+                        if "评分" in column_indices and data["score"]:
+                            try:
+                                worksheet.cell(row, column_indices["评分"]).value = int(data["score"])
+                            except ValueError:
+                                worksheet.cell(row, column_indices["评分"]).value = data["score"]
+
+                        if "通话优化建议" in column_indices and data["suggestion"]:
+                            worksheet.cell(row, column_indices["通话优化建议"]).value = data["suggestion"]
+
+                if st.session_state.summary_analysis:
+                    avg_score = ""
+                    avg_score_patterns = [
+                        r'平均评分[^\d]*(\d+\.?\d*)',
+                        r'平均评分：\s*(\d+\.?\d*)',
+                        r'平均[^\d]*(\d+\.?\d*)',
+                        r'平均分[^\d]*(\d+\.?\d*)'
+                    ]
+
+                    for pattern in avg_score_patterns:
+                        avg_score_match = re.search(pattern, st.session_state.summary_analysis)
+                        if avg_score_match:
+                            avg_score = avg_score_match.group(1)
+                            break
+
+                    suggestions = []
+                    list_items = re.findall(r'- (.+?)(?:\n|$)', st.session_state.summary_analysis)
+                    if list_items:
+                        suggestions.extend(list_items)
+
+                    if not suggestions:
+                        numbered_items = re.findall(r'\d+\.\s+(.+?)(?:\n|$)', st.session_state.summary_analysis)
+                        if numbered_items:
+                            suggestions.extend(numbered_items)
+
+                    formatted_suggestions = "改进建议：\n"
+                    for suggestion in suggestions:
+                        clean_suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
+                        clean_suggestion = re.sub(r'\*(.+?)\*', r'\1', clean_suggestion)
+                        formatted_suggestions += f"- {clean_suggestion}\n"
+
+                    summary_row = 32
+                    for row in range(1, worksheet.max_row + 1):
+                        cell_value = worksheet.cell(row, 1).value
+                        if cell_value and "总结" in str(cell_value):
+                            summary_row = row
+                            break
+
+                    if formatted_suggestions:
+                        worksheet.cell(summary_row, 2).value = formatted_suggestions
+
+                    total_score_col = None
+                    for col in range(1, worksheet.max_column + 1):
+                        cell_value = worksheet.cell(summary_row, col).value
+                        if cell_value and "总评分" in str(cell_value):
+                            total_score_col = col
+                            break
+
+                    if total_score_col and avg_score:
+                        worksheet.cell(summary_row, total_score_col).value = f"总评分：\n{avg_score}"
+                        worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(
+                            wrapText=True)
+
                 output = BytesIO()
                 workbook.save(output)
                 output.seek(0)
-                
-                # 获取BytesIO的内容
                 processed_data = output.getvalue()
                 return processed_data
             except Exception as e:
                 st.error(f"处理Excel文件时出错: {str(e)}")
                 return None
-        
+
+
         excel_data = generate_excel_report()
         if excel_data:
             st.download_button(
