@@ -21,6 +21,7 @@ import openpyxl
 # 配置日志输出
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
 
+
 # 讯飞API配置
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
 api_upload = '/upload'
