@@ -117,18 +117,17 @@ def merge_result_for_one_vad(result_vad):
     return content
 
 
-def identify_roles(raw_text: str) -> dict:
+async def identify_roles(raw_text: str) -> dict:
     """
-    使用LLM识别对话中的角色
+    使用LLM异步识别对话中的角色
     """
-    lines = raw_text.strip().split('\n')
-    sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
         openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
         openai_api_base="https://api.pumpkinaigc.online/v1",
         model_name="gpt-4o",
         temperature=0.2
     )
+    
     system_prompt = """
     你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
 
@@ -145,13 +144,16 @@ def identify_roles(raw_text: str) -> dict:
         "confidence": "high/medium/low"
     }
     """
+    
+    # 将完整的对话内容传递给模型
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"对话内容：\n\n{sample_dialogue}")
+        HumanMessage(content=f"对话内容：\n\n{raw_text}")
     ])
+    
     try:
-        response = llm(prompt.format_messages())
-        roles = json.loads(response.content)
+        response = await asyncio.to_thread(llm.agenerate, prompt.format_messages())
+        roles = json.loads(response.generations[0].message.content)
         return roles
     except Exception as e:
         return {
@@ -161,11 +163,11 @@ def identify_roles(raw_text: str) -> dict:
         }
 
 
-def format_conversation(raw_text: str) -> tuple:
+async def format_conversation(raw_text: str) -> tuple:
     """
     将原始的spk标记文本转换为更规范的对话格式
     """
-    roles = identify_roles(raw_text)
+    roles = await identify_roles(raw_text)  # 异步调用识别角色
     lines = raw_text.strip().split('\n')
     formatted_lines = []
     current_speaker = None
@@ -197,7 +199,7 @@ async def analyze_conversation_async(conversation_text: str) -> Dict:
     """
     异步分析通话记录并提供改进建议
     """
-    formatted_text, roles = format_conversation(conversation_text)
+    formatted_text, roles = await format_conversation(conversation_text)
     confidence_warning = ""
     if roles.get("confidence", "low") == "low":
         confidence_warning = "\n\n 注意：系统对说话者角色的识别可信度较低，请人工核实。"
