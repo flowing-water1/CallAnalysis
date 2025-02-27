@@ -21,16 +21,12 @@ import openpyxl
 # 配置日志输出
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
 
-
 # 讯飞API配置
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
 api_upload = '/upload'
 api_get_result = '/getResult'
 appid = "8d2e895b"
 secret_key = "8d5c02bd69345f504761da6b818b423f"
-
-# appid = "7fd8fde4"
-# secret_key = "ce4e08d9f1870b5a45dcedc60e99780f"
 
 # 请求签名生成
 def get_signa(appid, secret_key, ts):
@@ -42,7 +38,6 @@ def get_signa(appid, secret_key, ts):
     signa = base64.b64encode(signa)
     signa = str(signa, 'utf-8')
     return signa
-
 
 async def upload_file_async(session: aiohttp.ClientSession, file_path: str) -> Dict:
     """异步上传单个文件"""
@@ -68,13 +63,11 @@ async def upload_file_async(session: aiohttp.ClientSession, file_path: str) -> D
         logging.debug(f"上传文件 {file_name} 返回结果：{result}")
         return {"file_path": file_path, "result": result}
 
-
 async def upload_files_async(file_paths: List[str]) -> List[Dict]:
     """并发上传多个文件"""
     async with aiohttp.ClientSession() as session:
         tasks = [upload_file_async(session, file_path) for file_path in file_paths]
         return await asyncio.gather(*tasks)
-
 
 async def get_transcription_result_async(orderId: str) -> Dict:
     """
@@ -102,7 +95,6 @@ async def get_transcription_result_async(orderId: str) -> Dict:
             await asyncio.sleep(5)
     return result
 
-
 def merge_result_for_one_vad(result_vad):
     """规范化JSON文件为可读文本"""
     content = []
@@ -115,7 +107,6 @@ def merge_result_for_one_vad(result_vad):
         spk_str += '\n'
         content.append(spk_str)
     return content
-
 
 def identify_roles(raw_text: str) -> dict:
     """
@@ -130,7 +121,7 @@ def identify_roles(raw_text: str) -> dict:
         temperature=0.2
     )
     system_prompt = """
-    你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）.
+    你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
 
     判断依据：
     1. 说话方式和语气（销售通常更主动、更正式）
@@ -160,12 +151,10 @@ def identify_roles(raw_text: str) -> dict:
             "confidence": "low"
         }
 
-
-def format_conversation(raw_text: str) -> tuple:
+def format_conversation_with_roles(raw_text: str, roles: dict) -> str:
     """
-    将原始的spk标记文本转换为更规范的对话格式
+    根据已有的角色信息，将原始的spk标记文本转换为更规范的对话格式
     """
-    roles = identify_roles(raw_text)
     lines = raw_text.strip().split('\n')
     formatted_lines = []
     current_speaker = None
@@ -173,7 +162,7 @@ def format_conversation(raw_text: str) -> tuple:
     for line in lines:
         if not line.strip() or '##' not in line:
             continue
-        speaker, content = line.split('##')
+        speaker, content = line.split('##', 1)
         content = content.strip()
         if not content or content.strip().replace('、', '').isdigit():
             continue
@@ -182,22 +171,19 @@ def format_conversation(raw_text: str) -> tuple:
             current_content.append(content)
         else:
             if current_speaker and current_content:
-                formatted_lines.append(
-                    f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
+                formatted_lines.append(f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
             current_speaker = speaker
             current_content = [content]
     if current_speaker and current_content:
-        formatted_lines.append(
-            f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
+        formatted_lines.append(f"{roles.get(current_speaker, f'未知角色{current_speaker[-1]}')}：{''.join(current_content)}")
     formatted_text = '\n\n'.join(formatted_lines)
-    return formatted_text, roles
+    return formatted_text
 
-
-def analyze_conversation(conversation_text: str):
+def analyze_conversation_with_roles(conversation_text: str, roles: dict) -> dict:
     """
-    分析通话记录并提供改进建议
+    使用LLM对通话记录进行分析，并给出改进建议，此处不再调用identify_roles，而是使用传入的roles
     """
-    formatted_text, roles = format_conversation(conversation_text)
+    formatted_text = format_conversation_with_roles(conversation_text, roles)
     confidence_warning = ""
     if roles.get("confidence", "low") == "low":
         confidence_warning = "\n\n 注意：系统对说话者角色的识别可信度较低，请人工核实。"
@@ -217,17 +203,17 @@ def analyze_conversation(conversation_text: str):
         - 是否建立专业可信形象
     2. 客户需求洞察（20 分）
         - 是否明确客户行业类型
-        - 是否确认现有润滑油使用情况
+        - 是否确认现有需求
         - 是否量化客户业务规模
     3. SPIN 痛点挖掘（15 分）
         - Situation：是否确认现状
-        - Problem：是否发现运营问题
+        - Problem：是否发现问题
         - Implication：是否阐明问题影响
         - Need - Payoff：是否引导解决方案需求
     4. 价值展示能力（15 分）
         - 是否针对性匹配客户需求
         - 是否使用数据/案例支撑
-        - 是否说明 ROI 或成本效益
+        - 是否说明ROI或成本效益
     5. 决策流程掌握（10 分）
         - 是否确认采购决策阶段
         - 是否识别关键决策人
@@ -258,34 +244,30 @@ def analyze_conversation(conversation_text: str):
     ### 分析
     #### 标准 1 - 自我介绍
     - [分析内容]
-    **评分：25/30**
+    **评分：/30**
     #### 标准 2 - 客户需求洞察
     - [分析内容]
-    **评分：15/20**
+    **评分：/20**
     #### 标准 3 - SPIN 痛点挖掘
     - [分析内容]
-    **评分：10/15**
+    **评分：/15**
     #### 标准 4 - 价值展示能力
     - [分析内容]
-    **评分：12/15**
+    **评分：/15**
     #### 标准 5 - 决策流程掌握
     - [分析内容]
-    **评分：7/10**
+    **评分：/10**
     #### 标准 6 - 后续跟进铺垫
     - [分析内容]
-    **评分：6/10**
+    **评分：/10**
     #### 总分
-    #### 85/100
+    **/100**
 
     总结
     1. 改进点：[问题]
        建议：[方案] 
        示例：[引用对话记录的话术进行修改]
 
-    请确保：
-    - 每个评分都有对话文本支撑
-    - 改进建议可立即落地执行
-    - 避免主观臆断，仅基于对话事实
     现在开始逐项分析。
     """
     llm = ChatOpenAI(
@@ -301,9 +283,7 @@ def analyze_conversation(conversation_text: str):
     try:
         response = llm(prompt.format_messages())
         analysis_text = response.content
-        # 利用正则表达式去除链式思考过程（例如包含 Reasoning ... Reasoned for X seconds 的部分）
-        filtered_text = re.sub(r"(>?\s*Reasoning[\s\S]*?Reasoned for \d+\s*seconds\s*)", "", analysis_text,
-                               flags=re.IGNORECASE)
+        filtered_text = re.sub(r"(>?\s*Reasoning[\s\S]*?Reasoned for \d+\s*seconds\s*)", "", analysis_text, flags=re.IGNORECASE)
         return {
             "status": "success",
             "analysis": filtered_text,
@@ -316,10 +296,18 @@ def analyze_conversation(conversation_text: str):
             "message": f"分析过程中出现错误: {str(e)}"
         }
 
+async def llm_workflow(conversation_text: str) -> dict:
+    """
+    针对每个转写文件，先调用identify_roles，再调用analyze_conversation_with_roles，
+    形成一个完整的LLM工作流
+    """
+    roles = await asyncio.to_thread(identify_roles, conversation_text)
+    analysis_result = await asyncio.to_thread(analyze_conversation_with_roles, conversation_text, roles)
+    return analysis_result
 
 async def process_file(upload_result: Dict) -> Dict:
     """
-    异步处理单个文件：调用转写API、解析结果、保存转写文本并调用LLM进行分析
+    异步处理单个文件：调用转写API、解析结果、保存转写文本并启动LLM工作流（角色识别和通话记录分析）
     """
     file_path = upload_result["file_path"]
     logging.debug(f"开始处理文件 {file_path}")
@@ -348,9 +336,9 @@ async def process_file(upload_result: Dict) -> Dict:
                     f.write(line)
             with open(output_file_path, 'r', encoding='utf-8') as f:
                 conversation_text = f.read()
-            logging.debug(f"开始调用LLM分析，文件 {file_path}")
-            analysis_result = await asyncio.to_thread(analyze_conversation, conversation_text)
-            logging.debug(f"LLM分析完成，文件 {file_path}")
+            logging.debug(f"开始调用LLM工作流分析，文件 {file_path}")
+            analysis_result = await llm_workflow(conversation_text)
+            logging.debug(f"LLM工作流分析完成，文件 {file_path}")
             return {
                 "file_path": file_path,
                 "status": "success",
@@ -361,7 +349,6 @@ async def process_file(upload_result: Dict) -> Dict:
             return {"file_path": file_path, "status": "error", "message": "转写结果格式错误"}
     else:
         return {"file_path": file_path, "status": "error", "message": "上传失败或返回格式错误"}
-
 
 async def process_all_files(temp_files: List[str], progress_placeholder) -> List[Dict]:
     """
@@ -399,7 +386,6 @@ async def process_all_files(temp_files: List[str], progress_placeholder) -> List
     phase_text.markdown("**✅ 文件处理完成！**")
     progress_bar.progress(0.8)
     return results
-
 
 def analyze_summary(all_analysis_results: List[Dict]) -> str:
     """
@@ -442,7 +428,6 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
         - [建议2，按照要求格式编写]
         - [建议3，按照要求格式编写]
     """
-
     llm = ChatOpenAI(
         openai_api_key="f465c1fc-481e-4668-bfa2-ec9187c2f1e4",
         openai_api_base="https://ark.cn-beijing.volces.com/api/v3",
@@ -450,7 +435,6 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
         temperature=0.7
     )
 
-    # 准备所有分析结果的文本
     all_analyses = []
     for idx, result in enumerate(all_analysis_results, 1):
         if result["status"] == "success" and result["analysis_result"].get("status") == "success":
@@ -468,7 +452,6 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
         return response.content
     except Exception as e:
         return f"汇总分析过程中出现错误: {str(e)}"
-
 
 # Streamlit界面
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
@@ -515,7 +498,6 @@ if uploaded_files and not st.session_state.analysis_completed:
 
         try:
             results = asyncio.run(process_all_files(temp_files, progress_placeholder))
-            # 保存结果到session state
             st.session_state.analysis_results = results
 
             # 生成汇总分析并保存，同时更新进度条（汇总分析占 20%）
@@ -549,7 +531,6 @@ if uploaded_files and not st.session_state.analysis_completed:
                 if os.path.exists(temp_file):
                     os.remove(temp_file)
 
-# 如果有分析结果，显示标签页和下载按钮
 if st.session_state.analysis_results:
     tab1, tab2, tab3 = st.tabs(["📝 所有对话记录", "📊 所有分析结果", "📈 汇总分析"])
 
@@ -573,11 +554,9 @@ if st.session_state.analysis_results:
             if res["status"] == "success":
                 analysis_result = res["analysis_result"]
                 if analysis_result.get("status") == "success":
-                    # 获取文件名并去除temp_前缀和扩展名
                     file_name = os.path.basename(res["file_path"])
                     file_name = re.sub(r'^temp_', '', file_name)
                     file_name = os.path.splitext(file_name)[0]
-
                     with st.expander(f"📊 {file_name} 通话分析"):
                         st.markdown(analysis_result["analysis"])
                         st.markdown("---")
@@ -586,7 +565,6 @@ if st.session_state.analysis_results:
         st.markdown("### 📈 汇总分析报告")
         st.markdown(st.session_state.summary_analysis)
 
-    # 下载按钮区域
     col1, col2 = st.columns(2)
     with col1:
         st.download_button(
@@ -597,24 +575,18 @@ if st.session_state.analysis_results:
         )
 
     with col2:
-        # 处理Excel文件并提供下载
         def generate_excel_report():
             try:
-                # 使用openpyxl直接加载模板文件以保留原格式
                 workbook = openpyxl.load_workbook("电话开拓分析表.xlsx")
                 worksheet = workbook.active
-
-                # 获取上传文件的名称，并去除可能的"temp_"前缀
                 file_names = []
                 analysis_data = []
-
                 for res in st.session_state.analysis_results:
                     if res["status"] == "success" and res["analysis_result"].get("status") == "success":
                         file_name = os.path.basename(res["file_path"])
                         file_name = re.sub(r'^temp_', '', file_name)
                         file_name = os.path.splitext(file_name)[0]
                         file_names.append(file_name)
-
                         analysis_text = res["analysis_result"]["analysis"]
                         score = ""
                         score_patterns = [
@@ -629,18 +601,15 @@ if st.session_state.analysis_results:
                             r'\*\*(\d+)/100\*\*',
                             r'总分\s*\n\s*(\d+)'
                         ]
-
                         for pattern in score_patterns:
                             score_match = re.search(pattern, analysis_text)
                             if score_match:
                                 score = score_match.group(1)
                                 break
-
                         if not score:
                             general_score_match = re.search(r'(\d+)/100', analysis_text)
                             if general_score_match:
                                 score = general_score_match.group(1)
-
                         suggestion = ""
                         suggestion_patterns = [
                             r'建议：\s*(.+?)(?:\n|$)',
@@ -656,7 +625,6 @@ if st.session_state.analysis_results:
                             r'总结\s*\n\s*\d+\.\s*改进点：.+?\n\s*- 建议：\s*(.+?)(?:\n|$)',
                             r'建议\s*(.+?)(?:\n|$)'
                         ]
-
                         for pattern in suggestion_patterns:
                             suggestion_match = re.search(pattern, analysis_text)
                             if suggestion_match:
@@ -664,7 +632,6 @@ if st.session_state.analysis_results:
                                 suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
                                 suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
                                 break
-
                         if not suggestion:
                             summary_section = re.search(r'总结.*?(?:\n|$)(.*?)(?=##|\Z)', analysis_text, re.DOTALL)
                             if summary_section:
@@ -674,7 +641,6 @@ if st.session_state.analysis_results:
                                     suggestion = dash_content.group(1).strip()
                                     suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
                                     suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
-
                         if not suggestion:
                             summary_match = re.search(r'总结.*?(?:\n|$)(.*?)(?=\n\n|\Z)', analysis_text, re.DOTALL)
                             if summary_match:
@@ -683,15 +649,12 @@ if st.session_state.analysis_results:
                                     suggestion = first_sentence.group(0).strip()
                                     suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
                                     suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
-
                         analysis_data.append({"score": score, "suggestion": suggestion})
-
                 column_indices = {}
                 for col in range(1, worksheet.max_column + 1):
                     header = worksheet.cell(1, col).value
                     if header:
                         column_indices[header] = col
-
                 for i, (name, data) in enumerate(zip(file_names, analysis_data)):
                     row = i + 2
                     if row <= worksheet.max_row:
@@ -699,16 +662,13 @@ if st.session_state.analysis_results:
                             worksheet.cell(row, column_indices["客户名称"]).value = name
                         if "联系人" in column_indices:
                             worksheet.cell(row, column_indices["联系人"]).value = st.session_state.contact_person
-
                         if "评分" in column_indices and data["score"]:
                             try:
                                 worksheet.cell(row, column_indices["评分"]).value = int(data["score"])
                             except ValueError:
                                 worksheet.cell(row, column_indices["评分"]).value = data["score"]
-
                         if "通话优化建议" in column_indices and data["suggestion"]:
                             worksheet.cell(row, column_indices["通话优化建议"]).value = data["suggestion"]
-
                 if st.session_state.summary_analysis:
                     avg_score = ""
                     avg_score_patterns = [
@@ -717,51 +677,41 @@ if st.session_state.analysis_results:
                         r'平均[^\d]*(\d+\.?\d*)',
                         r'平均分[^\d]*(\d+\.?\d*)'
                     ]
-
                     for pattern in avg_score_patterns:
                         avg_score_match = re.search(pattern, st.session_state.summary_analysis)
                         if avg_score_match:
                             avg_score = avg_score_match.group(1)
                             break
-
                     suggestions = []
                     list_items = re.findall(r'- (.+?)(?:\n|$)', st.session_state.summary_analysis)
                     if list_items:
                         suggestions.extend(list_items)
-
                     if not suggestions:
                         numbered_items = re.findall(r'\d+\.\s+(.+?)(?:\n|$)', st.session_state.summary_analysis)
                         if numbered_items:
                             suggestions.extend(numbered_items)
-
                     formatted_suggestions = "改进建议：\n"
                     for suggestion in suggestions:
                         clean_suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
                         clean_suggestion = re.sub(r'\*(.+?)\*', r'\1', clean_suggestion)
                         formatted_suggestions += f"- {clean_suggestion}\n"
-
                     summary_row = 32
                     for row in range(1, worksheet.max_row + 1):
                         cell_value = worksheet.cell(row, 1).value
                         if cell_value and "总结" in str(cell_value):
                             summary_row = row
                             break
-
                     if formatted_suggestions:
                         worksheet.cell(summary_row, 2).value = formatted_suggestions
-
                     total_score_col = None
                     for col in range(1, worksheet.max_column + 1):
                         cell_value = worksheet.cell(summary_row, col).value
                         if cell_value and "总评分" in str(cell_value):
                             total_score_col = col
                             break
-
                     if total_score_col and avg_score:
                         worksheet.cell(summary_row, total_score_col).value = f"总评分：\n{avg_score}"
-                        worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(
-                            wrapText=True)
-
+                        worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(wrapText=True)
                 output = BytesIO()
                 workbook.save(output)
                 output.seek(0)
@@ -770,7 +720,6 @@ if st.session_state.analysis_results:
             except Exception as e:
                 st.error(f"处理Excel文件时出错: {str(e)}")
                 return None
-
 
         excel_data = generate_excel_report()
         if excel_data:
