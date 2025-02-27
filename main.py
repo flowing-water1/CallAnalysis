@@ -25,9 +25,8 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(me
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
 api_upload = '/upload'
 api_get_result = '/getResult'
-appid = "7fd8fde4"
-secret_key = "ce4e08d9f1870b5a45dcedc60e99780f"
-
+appid = "8d2e895b"
+secret_key = "8d5c02bd69345f504761da6b818b423f"
 
 # appid = "7fd8fde4"
 # secret_key = "ce4e08d9f1870b5a45dcedc60e99780f"
@@ -117,17 +116,18 @@ def merge_result_for_one_vad(result_vad):
     return content
 
 
-async def identify_roles(raw_text: str) -> dict:
+def identify_roles(raw_text: str) -> dict:
     """
-    使用LLM异步识别对话中的角色
+    使用LLM识别对话中的角色
     """
+    lines = raw_text.strip().split('\n')
+    sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
         openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
         openai_api_base="https://api.pumpkinaigc.online/v1",
         model_name="gpt-4o",
         temperature=0.2
     )
-    
     system_prompt = """
     你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
 
@@ -144,16 +144,13 @@ async def identify_roles(raw_text: str) -> dict:
         "confidence": "high/medium/low"
     }
     """
-    
-    # 将完整的对话内容传递给模型
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"对话内容：\n\n{raw_text}")
+        HumanMessage(content=f"对话内容：\n\n{sample_dialogue}")
     ])
-    
     try:
-        response = await asyncio.to_thread(llm.agenerate, prompt.format_messages())
-        roles = json.loads(response.generations[0].message.content)
+        response = llm(prompt.format_messages())
+        roles = json.loads(response.content)
         return roles
     except Exception as e:
         return {
@@ -163,11 +160,11 @@ async def identify_roles(raw_text: str) -> dict:
         }
 
 
-async def format_conversation(raw_text: str) -> tuple:
+def format_conversation(raw_text: str) -> tuple:
     """
     将原始的spk标记文本转换为更规范的对话格式
     """
-    roles = await identify_roles(raw_text)  # 异步调用识别角色
+    roles = identify_roles(raw_text)
     lines = raw_text.strip().split('\n')
     formatted_lines = []
     current_speaker = None
@@ -195,11 +192,11 @@ async def format_conversation(raw_text: str) -> tuple:
     return formatted_text, roles
 
 
-async def analyze_conversation_async(conversation_text: str) -> Dict:
+def analyze_conversation(conversation_text: str):
     """
-    异步分析通话记录并提供改进建议
+    分析通话记录并提供改进建议
     """
-    formatted_text, roles = await format_conversation(conversation_text)
+    formatted_text, roles = format_conversation(conversation_text)
     confidence_warning = ""
     if roles.get("confidence", "low") == "low":
         confidence_warning = "\n\n 注意：系统对说话者角色的识别可信度较低，请人工核实。"
@@ -301,7 +298,7 @@ async def analyze_conversation_async(conversation_text: str) -> Dict:
         HumanMessage(content=f"以下是需要分析的通话记录：\n\n{formatted_text}")
     ])
     try:
-        response = await asyncio.to_thread(llm, prompt.format_messages())
+        response = llm(prompt.format_messages())
         analysis_text = response.content
         # 利用正则表达式去除链式思考过程（例如包含 Reasoning ... Reasoned for X seconds 的部分）
         filtered_text = re.sub(r"(>?\s*Reasoning[\s\S]*?Reasoned for \d+\s*seconds\s*)", "", analysis_text,
@@ -317,14 +314,6 @@ async def analyze_conversation_async(conversation_text: str) -> Dict:
             "status": "error",
             "message": f"分析过程中出现错误: {str(e)}"
         }
-
-
-async def analyze_conversations_concurrently(conversation_texts: List[str]) -> List[Dict]:
-    """
-    异步并发分析多个通话记录
-    """
-    tasks = [analyze_conversation_async(text) for text in conversation_texts]
-    return await asyncio.gather(*tasks)
 
 
 async def process_file(upload_result: Dict) -> Dict:
@@ -357,14 +346,14 @@ async def process_file(upload_result: Dict) -> Dict:
                 for line in content:
                     f.write(line)
             with open(output_file_path, 'r', encoding='utf-8') as f:
-                conversation_texts = f.read().splitlines()  # 读取所有对话文本
+                conversation_text = f.read()
             logging.debug(f"开始调用LLM分析，文件 {file_path}")
-            analysis_results = await analyze_conversations_concurrently(conversation_texts)  # 异步调用分析
+            analysis_result = await asyncio.to_thread(analyze_conversation, conversation_text)
             logging.debug(f"LLM分析完成，文件 {file_path}")
             return {
                 "file_path": file_path,
                 "status": "success",
-                "analysis_results": analysis_results,
+                "analysis_result": analysis_result,
                 "output_file_path": output_file_path
             }
         else:
@@ -375,52 +364,39 @@ async def process_file(upload_result: Dict) -> Dict:
 
 async def process_all_files(temp_files: List[str], progress_placeholder) -> List[Dict]:
     """
-    优化后的进度条划分：
-       上传阶段：0 ~ 0.1
-       转写阶段：0.1 ~ 0.6
-       单文件分析：0.6 ~ 0.9
-       汇总分析：0.9 ~ 1.0
+    异步处理所有文件：先并发上传，再并发处理转写和分析，每完成一个文件更新进度
+    进度条划分：
+      上传阶段：0 ~ 0.2
+      文件处理阶段：0.2 ~ 0.8
     """
     progress_bar = progress_placeholder.progress(0)
     status_text = progress_placeholder.empty()
     phase_text = progress_placeholder.empty()
 
-    # 上传文件阶段 (10%)
-    phase_text.markdown("**📤 文件上传中...**")
+    # 上传文件阶段
+    phase_text.markdown("**📤 正在上传文件...**")
+    logging.debug("开始并发上传文件")
     upload_results = await upload_files_async(temp_files)
-    progress_bar.progress(0.1)
+    logging.debug("完成文件上传")
+    phase_text.markdown("**📤 上传完成！**")
+    progress_bar.progress(0.2)
 
-    # 转写阶段 (50%)
-    phase_text.markdown("**🔉 音频转写中...**")
-    transcribe_progress = 0.1
+    # 处理文件阶段
+    phase_text.markdown("**🔄 正在转写并分析文件...**")
     tasks = [process_file(upload_result) for upload_result in upload_results]
-
-    # 分析阶段 (30%) 每个文件分析占10%
     results = []
-    total_files = len(tasks)
-    for idx, task in enumerate(asyncio.as_completed(tasks), 1):
+    total = len(tasks)
+    count = 0
+    for task in asyncio.as_completed(tasks):
         result = await task
+        count += 1
+        progress = 0.2 + 0.6 * (count / total)
+        progress_bar.progress(progress)
+        status_text.markdown(f"⏳ 已完成 {count}/{total} 个文件")
         results.append(result)
-        # 更新转写进度（前50%中的40%）
-        transcribe_progress = 0.1 + 0.5 * (idx / total_files)
-        # 更新分析进度（后30%中的部分）
-        analysis_progress = 0.6 + 0.3 * (idx / total_files)
-        # 取较大值保证进度不后退
-        current_progress = max(transcribe_progress, analysis_progress)
-        progress_bar.progress(current_progress)
-        phase_text.markdown(f"**🔍 分析进行中 ({idx}/{total_files})...**")
-        status_text.markdown(f"""
-        ⚙️ 当前进度：
-        - 已完成转写：{idx}/{total_files}
-        - 已完成分析：{idx}/{total_files}
-        """)
 
-    # 汇总分析阶段 (10%)
-    phase_text.markdown("**📊 生成汇总分析...**")
-    progress_bar.progress(0.9)
-    st.session_state.summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
-    progress_bar.progress(1.0)
-
+    phase_text.markdown("**✅ 文件处理完成！**")
+    progress_bar.progress(0.8)
     return results
 
 
@@ -476,8 +452,8 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
     # 准备所有分析结果的文本
     all_analyses = []
     for idx, result in enumerate(all_analysis_results, 1):
-        if result["status"] == "success" and result["analysis_results"][0].get("status") == "success":
-            all_analyses.append(f"对话 {idx} 的分析结果：\n{result['analysis_results'][0]['analysis']}")
+        if result["status"] == "success" and result["analysis_result"].get("status") == "success":
+            all_analyses.append(f"对话 {idx} 的分析结果：\n{result['analysis_result']['analysis']}")
 
     combined_analyses = "\n\n".join(all_analyses)
 
@@ -509,71 +485,68 @@ if 'analysis_completed' not in st.session_state:
 if 'contact_person' not in st.session_state:
     st.session_state.contact_person = ""  # 用于存储联系人信息
 
-# 联系人输入框始终显示
+# 添加联系人输入框
 contact_person = st.text_input("请输入本次对接客户的联系人", value=st.session_state.contact_person)
 if contact_person != st.session_state.contact_person:
     st.session_state.contact_person = contact_person
 
-# 仅在填写联系人后显示上传模块
-if st.session_state.contact_person:
-    uploaded_files = st.file_uploader(
-        "请上传通话录音文件",
-        type=['wav', 'mp3', 'm4a', 'ogg'],
-        accept_multiple_files=True
-    )
+uploaded_files = st.file_uploader(
+    "请上传通话录音文件",
+    type=['wav', 'mp3', 'm4a', 'ogg'],
+    accept_multiple_files=True
+)
 
-    if uploaded_files and not st.session_state.analysis_completed:
-        st.write("已上传的文件:")
-        for file in uploaded_files:
-            st.write(f"- {file.name}")
+if uploaded_files and not st.session_state.analysis_completed:
+    st.write("已上传的文件:")
+    for file in uploaded_files:
+        st.write(f"- {file.name}")
 
-        if st.button("开始分析"):
-            progress_placeholder = st.container()
+    if st.button("开始分析"):
+        progress_placeholder = st.container()
 
-            # 保存上传的文件到本地临时文件夹
-            temp_files = []
-            for uploaded_file in uploaded_files:
-                temp_path = f"./temp_{uploaded_file.name}"
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                temp_files.append(temp_path)
+        # 保存上传的文件到本地临时文件夹
+        temp_files = []
+        for uploaded_file in uploaded_files:
+            temp_path = f"./temp_{uploaded_file.name}"
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getbuffer())
+            temp_files.append(temp_path)
 
-            try:
-                results = asyncio.run(process_all_files(temp_files, progress_placeholder))
-                # 保存结果到session state
-                st.session_state.analysis_results = results
+        try:
+            results = asyncio.run(process_all_files(temp_files, progress_placeholder))
+            # 保存结果到session state
+            st.session_state.analysis_results = results
 
-                # 生成汇总分析并保存，同时更新进度条（汇总分析占 20%）
-                phase_text = progress_placeholder.empty()
-                phase_text.markdown("**🔄 正在生成汇总分析...**")
-                progress_bar = progress_placeholder.progress(0.9)
-                st.session_state.summary_analysis = analyze_summary(
-                    [res for res in results if res["status"] == "success"])
-                progress_bar.progress(1.0)
-                phase_text.markdown("**✅ 所有文件处理完成！**")
+            # 生成汇总分析并保存，同时更新进度条（汇总分析占 20%）
+            phase_text = progress_placeholder.empty()
+            phase_text.markdown("**🔄 正在生成汇总分析...**")
+            progress_bar = progress_placeholder.progress(0.9)
+            st.session_state.summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
+            progress_bar.progress(1.0)
+            phase_text.markdown("**✅ 所有文件处理完成！**")
 
-                # 生成完整报告并保存
-                combined_report = ""
-                for idx, res in enumerate(results, 1):
-                    if res["status"] == "success" and res["analysis_results"][0].get("status") == "success":
-                        combined_report += f"\n\n{'=' * 50}\n对话记录 {idx}：\n{'=' * 50}\n\n"
-                        combined_report += res["analysis_results"][0]['formatted_text']
-                        combined_report += f"\n\n{'=' * 50}\n分析结果 {idx}：\n{'=' * 50}\n\n"
-                        combined_report += res["analysis_results"][0]['analysis']
+            # 生成完整报告并保存
+            combined_report = ""
+            for idx, res in enumerate(results, 1):
+                if res["status"] == "success" and res["analysis_result"].get("status") == "success":
+                    combined_report += f"\n\n{'=' * 50}\n对话记录 {idx}：\n{'=' * 50}\n\n"
+                    combined_report += res["analysis_result"]["formatted_text"]
+                    combined_report += f"\n\n{'=' * 50}\n分析结果 {idx}：\n{'=' * 50}\n\n"
+                    combined_report += res["analysis_result"]["analysis"]
 
-                combined_report += f"\n\n{'=' * 50}\n汇总分析报告：\n{'=' * 50}\n\n"
-                combined_report += st.session_state.summary_analysis
-                st.session_state.combined_report = combined_report
+            combined_report += f"\n\n{'=' * 50}\n汇总分析报告：\n{'=' * 50}\n\n"
+            combined_report += st.session_state.summary_analysis
+            st.session_state.combined_report = combined_report
 
-                st.session_state.analysis_completed = True  # 标记分析完成
+            st.session_state.analysis_completed = True  # 标记分析完成
 
-            except Exception as e:
-                st.error(f"处理过程中出现错误：{str(e)}")
-            finally:
-                # 清理临时文件
-                for temp_file in temp_files:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
+        except Exception as e:
+            st.error(f"处理过程中出现错误：{str(e)}")
+        finally:
+            # 清理临时文件
+            for temp_file in temp_files:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
 
 # 如果有分析结果，显示标签页和下载按钮
 if st.session_state.analysis_results:
@@ -582,7 +555,7 @@ if st.session_state.analysis_results:
     with tab1:
         for idx, res in enumerate(st.session_state.analysis_results, 1):
             if res["status"] == "success":
-                analysis_result = res["analysis_results"][0]
+                analysis_result = res["analysis_result"]
                 if analysis_result.get("status") == "success":
                     st.markdown(f"### 📝 对话记录 {idx}")
                     if analysis_result["roles"].get("confidence", "low") != "high":
@@ -597,7 +570,7 @@ if st.session_state.analysis_results:
     with tab2:
         for idx, res in enumerate(st.session_state.analysis_results, 1):
             if res["status"] == "success":
-                analysis_result = res["analysis_results"][0]
+                analysis_result = res["analysis_result"]
                 if analysis_result.get("status") == "success":
                     # 获取文件名并去除temp_前缀和扩展名
                     file_name = os.path.basename(res["file_path"])
@@ -635,13 +608,13 @@ if st.session_state.analysis_results:
                 analysis_data = []
 
                 for res in st.session_state.analysis_results:
-                    if res["status"] == "success" and res["analysis_results"][0].get("status") == "success":
+                    if res["status"] == "success" and res["analysis_result"].get("status") == "success":
                         file_name = os.path.basename(res["file_path"])
                         file_name = re.sub(r'^temp_', '', file_name)
                         file_name = os.path.splitext(file_name)[0]
                         file_names.append(file_name)
 
-                        analysis_text = res["analysis_results"][0]['analysis']
+                        analysis_text = res["analysis_result"]["analysis"]
                         score = ""
                         score_patterns = [
                             r'总分\s*\n\s*####\s*(\d+)/100',
