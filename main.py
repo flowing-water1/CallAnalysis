@@ -457,6 +457,7 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
 st.title("分析通话记录（Demo）📞")
 
+
 # 初始化session state
 if 'analysis_results' not in st.session_state:
     st.session_state.analysis_results = None
@@ -468,11 +469,47 @@ if 'analysis_completed' not in st.session_state:
     st.session_state.analysis_completed = False  # 用来标记分析是否完成
 if 'contact_person' not in st.session_state:
     st.session_state.contact_person = ""  # 用于存储联系人信息
+if 'tutorial_shown' not in st.session_state:
+    st.session_state.tutorial_shown = False
 
 # 添加联系人输入框
 contact_person = st.text_input("请输入本次对接客户的联系人", value=st.session_state.contact_person)
 if contact_person != st.session_state.contact_person:
     st.session_state.contact_person = contact_person
+
+# 显示教程对话框
+def close_tutorial():
+    st.session_state.tutorial_shown = True
+    st.rerun()
+
+@st.dialog(title="欢迎使用通话分析工具！", width="large")
+def tuturioal():
+    st.markdown("### 教程")
+    st.markdown("1. 在此处填入你的名字：")
+    st.image("填入名字.png")
+
+    st.markdown("2. 然后点击下面的按钮上传文件：")
+    st.image("上传文件按钮.png")
+    st.image("上传多文件.png")
+    st.markdown("可以上传多个文件。")
+
+    st.markdown("3. 点击'开始分析'：")
+    st.image("开始分析.png")
+
+    st.markdown("4. 等待即可，不要关闭网页，晾在旁边即可。")
+    st.markdown("最终结果：")
+    st.image("最终结果.png")
+    st.markdown("下载'完整分析报告'和'电话开拓分析表'。")
+    st.markdown("表格中已自动填写好对应栏目：")
+    st.image("最终文档结果.png")
+    
+    # 添加关闭按钮
+    st.button("关闭教程", on_click=close_tutorial)
+
+# 仅在第一次加载页面且教程未显示过时显示教程
+if not st.session_state.tutorial_shown:
+    tuturioal()
+    st.session_state.tutorial_shown = True
 
 uploaded_files = st.file_uploader(
     "请上传通话录音文件",
