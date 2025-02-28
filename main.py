@@ -499,6 +499,7 @@ def tuturioal():
     st.markdown("下载'完整分析报告'和'电话开拓分析表'。")
     st.markdown("表格中已自动填写好对应栏目：")
     st.image("最终文档结果.png")
+    st.markdown("点击窗口外的随机地方就可以关闭窗口，或者滚轮上去点击关闭按钮")
     
 
 
