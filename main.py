@@ -17,6 +17,7 @@ import pandas as pd
 from io import BytesIO
 import re
 import openpyxl
+from langchain_community.callbacks.streamlit import StreamlitCallbackHandler
 
 # 配置日志输出
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
@@ -25,8 +26,12 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(me
 lfasr_host = 'https://raasr.xfyun.cn/v2/api'
 api_upload = '/upload'
 api_get_result = '/getResult'
-appid = "8d2e895b"
-secret_key = "8d5c02bd69345f504761da6b818b423f"
+# appid = "8d2e895b"
+# secret_key = "8d5c02bd69345f504761da6b818b423f"
+
+
+appid = "7fd8fde4"
+secret_key = "ce4e08d9f1870b5a45dcedc60e99780f"
 
 # 请求签名生成
 def get_signa(appid, secret_key, ts):
@@ -108,17 +113,24 @@ def merge_result_for_one_vad(result_vad):
         content.append(spk_str)
     return content
 
-def identify_roles(raw_text: str) -> dict:
+def identify_roles(raw_text: str, st_placeholder) -> dict:
     """
     使用LLM识别对话中的角色
     """
+
+    # 创建用于流式输出的父容器，并构造回调处理器
+    st_callback = StreamlitCallbackHandler(st_placeholder)
+
+
     lines = raw_text.strip().split('\n')
     sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
         openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
         openai_api_base="https://api.pumpkinaigc.online/v1",
         model_name="gpt-4o",
-        temperature=0.2
+        temperature=0.2,
+        streaming=True,
+        callbacks=[st_callback]
     )
     system_prompt = """
     你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
@@ -140,8 +152,10 @@ def identify_roles(raw_text: str) -> dict:
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"对话内容：\n\n{sample_dialogue}")
     ])
+
+    response = llm(prompt.format_messages())
+
     try:
-        response = llm(prompt.format_messages())
         roles = json.loads(response.content)
         return roles
     except Exception as e:
@@ -179,10 +193,12 @@ def format_conversation_with_roles(raw_text: str, roles: dict) -> str:
     formatted_text = '\n\n'.join(formatted_lines)
     return formatted_text
 
-def analyze_conversation_with_roles(conversation_text: str, roles: dict) -> dict:
+def analyze_conversation_with_roles(conversation_text: str, roles: dict, st_placeholder) -> dict:
     """
     使用LLM对通话记录进行分析，并给出改进建议，此处不再调用identify_roles，而是使用传入的roles
     """
+    st_callback = StreamlitCallbackHandler(st_placeholder)
+
     formatted_text = format_conversation_with_roles(conversation_text, roles)
     confidence_warning = ""
     if roles.get("confidence", "low") == "low":
@@ -274,14 +290,18 @@ def analyze_conversation_with_roles(conversation_text: str, roles: dict) -> dict
         openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
         openai_api_base="https://api.pumpkinaigc.online/v1",
         model_name="gpt-4o",
-        temperature=0.7
+        temperature=0.7,
+        streaming = True,
+        callbacks = [st_callback]
     )
     prompt = ChatPromptTemplate.from_messages([
         SystemMessage(content=system_prompt),
         HumanMessage(content=f"以下是需要分析的通话记录：\n\n{formatted_text}")
     ])
+
+    response = llm(prompt.format_messages())
+
     try:
-        response = llm(prompt.format_messages())
         analysis_text = response.content
         filtered_text = re.sub(r"(>?\s*Reasoning[\s\S]*?Reasoned for \d+\s*seconds\s*)", "", analysis_text, flags=re.IGNORECASE)
         return {
@@ -387,10 +407,12 @@ async def process_all_files(temp_files: List[str], progress_placeholder) -> List
     progress_bar.progress(0.8)
     return results
 
-def analyze_summary(all_analysis_results: List[Dict]) -> str:
+def analyze_summary(all_analysis_results: list, st_placeholder) -> str:
     """
     对所有对话的分析结果进行汇总分析
     """
+    st_callback = StreamlitCallbackHandler(st_placeholder)
+
     system_prompt = f"""
     你是一位专业的销售培训专家，需要根据当日销售对话分析报告进行汇总分析，生成一份结构化的销售分析报告。
 
@@ -432,7 +454,9 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
         openai_api_key="f465c1fc-481e-4668-bfa2-ec9187c2f1e4",
         openai_api_base="https://ark.cn-beijing.volces.com/api/v3",
         model_name="deepseek-r1-250120",
-        temperature=0.7
+        temperature=0.7,
+        streaming=True,
+        callbacks=[st_callback]
     )
 
     all_analyses = []
@@ -452,6 +476,8 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
         return response.content
     except Exception as e:
         return f"汇总分析过程中出现错误: {str(e)}"
+
+
 
 # Streamlit界面
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
