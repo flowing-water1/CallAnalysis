@@ -477,10 +477,7 @@ contact_person = st.text_input("请输入本次对接客户的联系人", value=
 if contact_person != st.session_state.contact_person:
     st.session_state.contact_person = contact_person
 
-# 显示教程对话框
-def close_tutorial():
-    st.session_state.tutorial_shown = True
-    st.rerun()
+
 
 @st.dialog(title="欢迎使用通话分析工具！", width="large")
 def tuturioal():
@@ -503,8 +500,7 @@ def tuturioal():
     st.markdown("表格中已自动填写好对应栏目：")
     st.image("最终文档结果.png")
     
-    # 添加关闭按钮
-    st.button("关闭教程", on_click=close_tutorial)
+
 
 # 仅在第一次加载页面且教程未显示过时显示教程
 if not st.session_state.tutorial_shown:
