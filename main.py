@@ -453,10 +453,67 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
     except Exception as e:
         return f"汇总分析过程中出现错误: {str(e)}"
 
+
+@st.dialog(title="欢迎使用通话分析工具！", width="large")
+def tutorial():
+    st.markdown("## 📚 使用教程")
+    st.markdown("### ⚠️ 重要格式要求")
+    st.markdown(
+        "上传文件的格式必须是 :red[**\"公司名称-联系人-电话号码\"**] 的形式。中间有无空格不影响，但必须使用 :red[**\"-\"**] 作为分隔符。（此格式要求将在后续版本中优化）",
+        unsafe_allow_html=True)
+
+    st.markdown("### 使用流程")
+
+    st.markdown("#### 1️⃣ 上传文件")
+    st.markdown("点击下方按钮上传您的通话录音文件：")
+    st.image("tutorial/上传文件按钮.png")
+    st.markdown(":green[✅] 支持批量上传多个文件")
+    st.image("tutorial/上传文件.png")
+
+    st.markdown("#### 2️⃣ 确认上传状态")
+    st.markdown("成功上传后，您将看到如下界面：")
+    st.image("tutorial/上传之后的样子.png")
+
+    st.markdown("#### 3️⃣ 开始分析流程")
+    st.markdown("点击 :blue[**\"开始分析\"**] 按钮启动处理：")
+    st.image("tutorial/开始分析.png")
+
+    st.markdown("#### 4️⃣ 等待处理完成")
+    st.markdown("系统正在处理中，请保持页面打开。您可以暂时切换到其他工作，处理完成后回来查看结果。")
+
+    st.markdown("#### 5️⃣ 查看分析结果")
+    st.image("tutorial/最终结果.png")
+
+    st.markdown("#### 6️⃣ 导出分析报告")
+    st.markdown("您可以下载：")
+    st.markdown("• :blue[完整分析报告] - 包含所有通话记录和详细分析")
+    st.markdown("• :green[电话开拓分析表] - 自动填写好的分析数据表格")
+
+    st.markdown("表格中已自动填写好对应数据项：")
+    st.image("tutorial/分析结果表格.png")
+
+    st.markdown("分析报告采用Markdown格式，建议使用Markdown编辑器打开以获得最佳阅读体验：")
+    st.image("tutorial/分析结果文档.png")
+
+    st.markdown("### ❓ 如何关闭本教程")
+    st.markdown("点击对话框外任意位置，或滚动至顶部点击右上角的“❌”即可关闭本教程。")
+
+
 # Streamlit界面
 st.set_page_config(page_title="分析通话记录Demo", page_icon="📞")
-st.title("分析通话记录（Demo）📞")
 
+# 使用列布局让标题和按钮在同一行
+title_col, button_col = st.columns([5, 1.2])
+
+# 在第一列放置标题
+with title_col:
+    st.title("分析通话记录📞")
+
+# 在第二列放置帮助按钮
+with button_col:
+    if st.button("📚 查看教程", help="点击查看详细使用教程"):
+        # 当按钮被点击时，触发教程对话框
+        tutorial()
 
 # 初始化session state
 if 'analysis_results' not in st.session_state:
@@ -470,47 +527,6 @@ if 'analysis_completed' not in st.session_state:
 if 'tutorial_shown' not in st.session_state:
     st.session_state.tutorial_shown = False
 
-@st.dialog(title="欢迎使用通话分析工具！", width="large")
-def tutorial():
-    st.markdown("## 📚 使用教程")
-    st.markdown("### ⚠️ 重要格式要求")
-    st.markdown("上传文件的格式必须是 :red[**\"公司名称-联系人-电话号码\"**] 的形式。中间有无空格不影响，但必须使用 :red[**\"-\"**] 作为分隔符。（此格式要求将在后续版本中优化）", unsafe_allow_html=True)
-    
-    st.markdown("### 使用流程")
-    
-    st.markdown("#### 1️⃣ 上传文件")
-    st.markdown("点击下方按钮上传您的通话录音文件：")
-    st.image("tutorial/上传文件按钮.png")
-    st.markdown(":green[✅] 支持批量上传多个文件")
-    st.image("tutorial/上传文件.png")
-    
-    st.markdown("#### 2️⃣ 确认上传状态")
-    st.markdown("成功上传后，您将看到如下界面：")
-    st.image("tutorial/上传之后的样子.png")
-    
-    st.markdown("#### 3️⃣ 开始分析流程")
-    st.markdown("点击 :blue[**\"开始分析\"**] 按钮启动处理：")
-    st.image("tutorial/开始分析.png")
-
-    st.markdown("#### 4️⃣ 等待处理完成")
-    st.markdown("系统正在处理中，请保持页面打开。您可以暂时切换到其他工作，处理完成后回来查看结果。")
-    
-    st.markdown("#### 5️⃣ 查看分析结果")
-    st.image("tutorial/最终结果.png")
-
-    st.markdown("#### 6️⃣ 导出分析报告")
-    st.markdown("您可以下载：")
-    st.markdown("• :blue[完整分析报告] - 包含所有通话记录和详细分析")
-    st.markdown("• :green[电话开拓分析表] - 自动填写好的分析数据表格")
-    
-    st.markdown("表格中已自动填写好对应数据项：")
-    st.image("tutorial/分析结果表格.png")
-
-    st.markdown("分析报告采用Markdown格式，建议使用Markdown编辑器打开以获得最佳阅读体验：")
-    st.image("tutorial/分析结果文档.png")
-    
-    st.markdown("### ❓ 如何关闭本教程")
-    st.markdown("点击对话框外任意位置，或滚动至顶部点击关闭按钮即可关闭本教程。")
 
     
 
