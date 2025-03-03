@@ -467,45 +467,57 @@ if 'summary_analysis' not in st.session_state:
     st.session_state.summary_analysis = None
 if 'analysis_completed' not in st.session_state:
     st.session_state.analysis_completed = False  # 用来标记分析是否完成
-if 'contact_person' not in st.session_state:
-    st.session_state.contact_person = ""  # 用于存储联系人信息
 if 'tutorial_shown' not in st.session_state:
     st.session_state.tutorial_shown = False
 
-# 添加联系人输入框
-contact_person = st.text_input("请输入本次对接客户的联系人", value=st.session_state.contact_person)
-if contact_person != st.session_state.contact_person:
-    st.session_state.contact_person = contact_person
-
-
-
 @st.dialog(title="欢迎使用通话分析工具！", width="large")
-def tuturioal():
-    st.markdown("### 教程")
-    st.markdown("1. 在此处填入你的名字：")
-    st.image("填入名字.png")
+def tutorial():
+    st.markdown("## 📚 使用教程")
+    st.markdown("### ⚠️ 重要格式要求")
+    st.markdown("上传文件的格式必须是 :red[**\"公司名称-联系人-电话号码\"**] 的形式。中间有无空格不影响，但必须使用 :red[**\"-\"**] 作为分隔符。（此格式要求将在后续版本中优化）", unsafe_allow_html=True)
+    
+    st.markdown("### 使用流程")
+    
+    st.markdown("#### 1️⃣ 上传文件")
+    st.markdown("点击下方按钮上传您的通话录音文件：")
+    st.image("tutorial/上传文件按钮.png")
+    st.markdown(":green[✅] 支持批量上传多个文件")
+    st.image("tutorial/上传文件.png")
+    
+    st.markdown("#### 2️⃣ 确认上传状态")
+    st.markdown("成功上传后，您将看到如下界面：")
+    st.image("tutorial/上传之后的样子.png")
+    
+    st.markdown("#### 3️⃣ 开始分析流程")
+    st.markdown("点击 :blue[**\"开始分析\"**] 按钮启动处理：")
+    st.image("tutorial/开始分析.png")
 
-    st.markdown("2. 然后点击下面的按钮上传文件：")
-    st.image("上传文件按钮.png")
-    st.image("上传多文件.png")
-    st.markdown("可以上传多个文件。")
+    st.markdown("#### 4️⃣ 等待处理完成")
+    st.markdown("系统正在处理中，请保持页面打开。您可以暂时切换到其他工作，处理完成后回来查看结果。")
+    
+    st.markdown("#### 5️⃣ 查看分析结果")
+    st.image("tutorial/最终结果.png")
 
-    st.markdown("3. 点击'开始分析'：")
-    st.image("开始分析.png")
+    st.markdown("#### 6️⃣ 导出分析报告")
+    st.markdown("您可以下载：")
+    st.markdown("• :blue[完整分析报告] - 包含所有通话记录和详细分析")
+    st.markdown("• :green[电话开拓分析表] - 自动填写好的分析数据表格")
+    
+    st.markdown("表格中已自动填写好对应数据项：")
+    st.image("tutorial/分析结果表格.png")
 
-    st.markdown("4. 等待即可，不要关闭网页，晾在旁边即可。")
-    st.markdown("最终结果：")
-    st.image("最终结果.png")
-    st.markdown("下载'完整分析报告'和'电话开拓分析表'。")
-    st.markdown("表格中已自动填写好对应栏目：")
-    st.image("最终文档结果.png")
-    st.markdown("点击窗口外的随机地方就可以关闭窗口，或者滚轮上去点击关闭按钮")
+    st.markdown("分析报告采用Markdown格式，建议使用Markdown编辑器打开以获得最佳阅读体验：")
+    st.image("tutorial/分析结果文档.png")
+    
+    st.markdown("### ❓ 如何关闭本教程")
+    st.markdown("点击对话框外任意位置，或滚动至顶部点击关闭按钮即可关闭本教程。")
+
     
 
 
 # 仅在第一次加载页面且教程未显示过时显示教程
 if not st.session_state.tutorial_shown:
-    tuturioal()
+    tutorial()
     st.session_state.tutorial_shown = True
 
 uploaded_files = st.file_uploader(
@@ -614,6 +626,7 @@ if st.session_state.analysis_results:
                 workbook = openpyxl.load_workbook("电话开拓分析表.xlsx")
                 worksheet = workbook.active
                 file_names = []
+                contact_persons = []
                 analysis_data = []
                 for res in st.session_state.analysis_results:
                     if res["status"] == "success" and res["analysis_result"].get("status") == "success":
@@ -621,27 +634,39 @@ if st.session_state.analysis_results:
                         file_name = re.sub(r'^temp_', '', file_name)
                         file_name = os.path.splitext(file_name)[0]
                         
-                        # 提取电话号码
+                        # 提取公司名称、联系人、电话号码
+                        # 尝试匹配新格式: "公司名-联系人-电话号码"
+                        pattern = r'^(.*?)-(.*?)-(.*)$'
+                        match = re.match(pattern, file_name)
+                        
+                        company_name = ""
+                        contact_person = ""
                         phone_number = ""
-                        # 匹配格式: "公司名 - 电话号码" 或 "公司名-电话号码"
-                        phone_patterns = [
-                            r'.*?[\s-]+(\d{11})$',  # 匹配标准11位手机号
-                            r'.*?[\s-]+(\d{3,4}[\s-]*\d{7,8})$',  # 匹配座机号码格式
-                            r'.*?[\s-]+(\d{3}[\s-]*\d{4}[\s-]*\d{4})$',  # 匹配手机号中间有空格或连字符的情况
-                        ]
                         
-                        for pattern in phone_patterns:
-                            phone_match = re.search(pattern, file_name)
-                            if phone_match:
-                                phone_number = phone_match.group(1)
-                                # 清理电话号码中的空格和连字符
-                                phone_number = re.sub(r'[\s-]', '', phone_number)
-                                break
+                        if match:
+                            # 新格式
+                            company_name = match.group(1).strip()
+                            contact_person = match.group(2).strip()
+                            raw_phone = match.group(3).strip()
+                            
+                            # 清理电话号码中的空格和连字符
+                            phone_number = re.sub(r'[\s-]', '', raw_phone)
+                        else:
+                            # 旧格式兼容: "公司名-电话号码"
+                            old_pattern = r'^(.*?)-(.*?)$'
+                            old_match = re.match(old_pattern, file_name)
+                            if old_match:
+                                company_name = old_match.group(1).strip()
+                                raw_phone = old_match.group(2).strip()
+                                phone_number = re.sub(r'[\s-]', '', raw_phone)
+                            else:
+                                # 如果两种格式都不匹配，直接使用文件名作为公司名
+                                company_name = file_name
                         
-                        # 从文件名中提取客户名称（去除电话号码部分）
-                        clean_name = re.sub(r'[\s-]+\d+.*$', '', file_name).strip()
+                        file_names.append(company_name)
+                        contact_persons.append(contact_person)
                         
-                        file_names.append(clean_name)
+                        # 提取评分和建议
                         analysis_text = res["analysis_result"]["analysis"]
                         score = ""
                         score_patterns = [
@@ -704,19 +729,28 @@ if st.session_state.analysis_results:
                                     suggestion = first_sentence.group(0).strip()
                                     suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
                                     suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
-                        analysis_data.append({"score": score, "suggestion": suggestion, "phone_number": phone_number})
+                        analysis_data.append({
+                            "score": score, 
+                            "suggestion": suggestion, 
+                            "phone_number": phone_number,
+                            "contact_person": contact_person
+                        })
+                
+                # 查找表格中的列
                 column_indices = {}
                 for col in range(1, worksheet.max_column + 1):
                     header = worksheet.cell(1, col).value
                     if header:
                         column_indices[header] = col
+                
+                # 填写数据到表格中
                 for i, (name, data) in enumerate(zip(file_names, analysis_data)):
                     row = i + 2
                     if row <= worksheet.max_row:
                         if "客户名称" in column_indices:
                             worksheet.cell(row, column_indices["客户名称"]).value = name
                         if "联系人" in column_indices:
-                            worksheet.cell(row, column_indices["联系人"]).value = st.session_state.contact_person
+                            worksheet.cell(row, column_indices["联系人"]).value = data["contact_person"]
                         if "联系电话" in column_indices and data["phone_number"]:
                             worksheet.cell(row, column_indices["联系电话"]).value = data["phone_number"]
                         if "评分" in column_indices and data["score"]:
@@ -726,6 +760,18 @@ if st.session_state.analysis_results:
                                 worksheet.cell(row, column_indices["评分"]).value = data["score"]
                         if "通话优化建议" in column_indices and data["suggestion"]:
                             worksheet.cell(row, column_indices["通话优化建议"]).value = data["suggestion"]
+                
+                # 填写该日电话数
+                total_calls = len([res for res in st.session_state.analysis_results if res["status"] == "success"])
+                # 寻找"该日电话数"单元格
+                for row in range(1, worksheet.max_row + 1):
+                    cell_value = worksheet.cell(row, 1).value
+                    if cell_value and "该日电话数" in str(cell_value):
+                        # 假设CDEF合并单元格在第3列开始
+                        worksheet.cell(row, 3).value = total_calls
+                        break
+                
+                # 处理总结部分
                 if st.session_state.summary_analysis:
                     avg_score = ""
                     avg_score_patterns = [
@@ -752,23 +798,34 @@ if st.session_state.analysis_results:
                         clean_suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
                         clean_suggestion = re.sub(r'\*(.+?)\*', r'\1', clean_suggestion)
                         formatted_suggestions += f"- {clean_suggestion}\n"
-                    summary_row = 32
+                    
+                    # 找到总结行
+                    summary_row = None
                     for row in range(1, worksheet.max_row + 1):
                         cell_value = worksheet.cell(row, 1).value
                         if cell_value and "总结" in str(cell_value):
                             summary_row = row
                             break
+                    
+                    if not summary_row:
+                        # 如果没找到，默认使用第33行
+                        summary_row = 33
+                    
                     if formatted_suggestions:
                         worksheet.cell(summary_row, 2).value = formatted_suggestions
+                    
+                    # 查找总评分列
                     total_score_col = None
                     for col in range(1, worksheet.max_column + 1):
                         cell_value = worksheet.cell(summary_row, col).value
                         if cell_value and "总评分" in str(cell_value):
                             total_score_col = col
                             break
+                    
                     if total_score_col and avg_score:
                         worksheet.cell(summary_row, total_score_col).value = f"总评分：\n{avg_score}"
                         worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(wrapText=True)
+                
                 output = BytesIO()
                 workbook.save(output)
                 output.seek(0)
