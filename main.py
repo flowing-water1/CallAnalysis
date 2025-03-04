@@ -17,16 +17,13 @@ import pandas as pd
 from io import BytesIO
 import re
 import openpyxl
+from config import XFYUN_CONFIG, OPENAI_CONFIG, LOGGING_CONFIG, EXCEL_CONFIG
 
 # 配置日志输出
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s %(levelname)s: %(message)s')
-
-# 讯飞API配置
-lfasr_host = 'https://raasr.xfyun.cn/v2/api'
-api_upload = '/upload'
-api_get_result = '/getResult'
-appid = "8d2e895b"
-secret_key = "8d5c02bd69345f504761da6b818b423f"
+logging.basicConfig(
+    level=getattr(logging, LOGGING_CONFIG["level"]), 
+    format=LOGGING_CONFIG["format"]
+)
 
 # 请求签名生成
 def get_signa(appid, secret_key, ts):
@@ -42,11 +39,11 @@ def get_signa(appid, secret_key, ts):
 async def upload_file_async(session: aiohttp.ClientSession, file_path: str) -> Dict:
     """异步上传单个文件"""
     ts = str(int(time.time()))
-    signa = get_signa(appid, secret_key, ts)
+    signa = get_signa(XFYUN_CONFIG["appid"], XFYUN_CONFIG["secret_key"], ts)
     file_len = os.path.getsize(file_path)
     file_name = os.path.basename(file_path)
     param_dict = {
-        'appId': appid,
+        'appId': XFYUN_CONFIG["appid"],
         'signa': signa,
         'ts': ts,
         'fileSize': file_len,
@@ -55,7 +52,7 @@ async def upload_file_async(session: aiohttp.ClientSession, file_path: str) -> D
         'roleNum': 2,
         'roleType': 1
     }
-    url = lfasr_host + api_upload + "?" + urllib.parse.urlencode(param_dict)
+    url = XFYUN_CONFIG["lfasr_host"] + XFYUN_CONFIG["api_upload"] + "?" + urllib.parse.urlencode(param_dict)
     with open(file_path, 'rb') as f:
         data = f.read()
     async with session.post(url, headers={"Content-type": "application/json"}, data=data) as response:
@@ -74,15 +71,15 @@ async def get_transcription_result_async(orderId: str) -> Dict:
     异步获取转写结果
     """
     ts = str(int(time.time()))
-    signa = get_signa(appid, secret_key, ts)
+    signa = get_signa(XFYUN_CONFIG["appid"], XFYUN_CONFIG["secret_key"], ts)
     param_dict = {
-        'appId': appid,
+        'appId': XFYUN_CONFIG["appid"],
         'signa': signa,
         'ts': ts,
         'orderId': orderId,
         'resultType': "transfer,predict"
     }
-    url = lfasr_host + api_get_result + "?" + urllib.parse.urlencode(param_dict)
+    url = XFYUN_CONFIG["lfasr_host"] + XFYUN_CONFIG["api_get_result"] + "?" + urllib.parse.urlencode(param_dict)
     status = 3
     async with aiohttp.ClientSession() as session:
         while status == 3:
@@ -115,9 +112,9 @@ def identify_roles(raw_text: str) -> dict:
     lines = raw_text.strip().split('\n')
     sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
-        openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
-        openai_api_base="https://api.pumpkinaigc.online/v1",
-        model_name="gpt-4o",
+        openai_api_key=OPENAI_CONFIG["api_key"],
+        openai_api_base=OPENAI_CONFIG["api_base"],
+        model_name=OPENAI_CONFIG["model_name"],
         temperature=0.2
     )
     system_prompt = """
@@ -271,9 +268,9 @@ def analyze_conversation_with_roles(conversation_text: str, roles: dict) -> dict
     现在开始逐项分析。
     """
     llm = ChatOpenAI(
-        openai_api_key="sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
-        openai_api_base="https://api.pumpkinaigc.online/v1",
-        model_name="gpt-4o",
+        openai_api_key=OPENAI_CONFIG["api_key"],
+        openai_api_base=OPENAI_CONFIG["api_base"],
+        model_name=OPENAI_CONFIG["model_name"],
         temperature=0.7
     )
     prompt = ChatPromptTemplate.from_messages([
@@ -429,9 +426,9 @@ def analyze_summary(all_analysis_results: List[Dict]) -> str:
         - [建议3，按照要求格式编写]
     """
     llm = ChatOpenAI(
-        openai_api_key="f465c1fc-481e-4668-bfa2-ec9187c2f1e4",
-        openai_api_base="https://ark.cn-beijing.volces.com/api/v3",
-        model_name="deepseek-r1-250120",
+        openai_api_key=OPENAI_CONFIG["api_key"],
+        openai_api_base=OPENAI_CONFIG["api_base"],
+        model_name=OPENAI_CONFIG["model_name"],
         temperature=0.7
     )
 
@@ -496,7 +493,7 @@ def tutorial():
     st.image("tutorial/分析结果文档.png")
 
     st.markdown("### ❓ 如何关闭本教程")
-    st.markdown("点击对话框外任意位置，或滚动至顶部点击右上角的“❌”即可关闭本教程。")
+    st.markdown("点击对话框外任意位置，或滚动至顶部点击右上角的'❌'即可关闭本教程。")
 
 
 # Streamlit界面
@@ -639,7 +636,7 @@ if st.session_state.analysis_results:
     with col2:
         def generate_excel_report():
             try:
-                workbook = openpyxl.load_workbook("电话开拓分析表.xlsx")
+                workbook = openpyxl.load_workbook(EXCEL_CONFIG["template_file"])
                 worksheet = workbook.active
                 file_names = []
                 contact_persons = []
@@ -825,7 +822,7 @@ if st.session_state.analysis_results:
                     
                     if not summary_row:
                         # 如果没找到，默认使用第33行
-                        summary_row = 33
+                        summary_row = EXCEL_CONFIG["summary_row"]
                     
                     if formatted_suggestions:
                         worksheet.cell(summary_row, 2).value = formatted_suggestions
