@@ -1,23 +1,11 @@
 import streamlit as st
 import os
-import json
-import time
-import base64
-import hashlib
-import hmac
-import urllib
 import asyncio
-import aiohttp
 import logging
-from typing import List, Dict
-from langchain_community.chat_models import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema import HumanMessage, SystemMessage
-import pandas as pd
 from io import BytesIO
 import re
 import openpyxl
-from config import XFYUN_CONFIG, OPENAI_CONFIG, LOGGING_CONFIG, EXCEL_CONFIG
+from config import LOGGING_CONFIG, EXCEL_CONFIG
 from Audio_Recognition import (
     upload_files_async,
     get_transcription_result_async,
@@ -27,13 +15,11 @@ from Audio_Recognition import (
 )
 from Identify_Roles import (
     identify_roles,
-    format_conversation_with_roles,
-    llm_workflow
+    format_conversation_with_roles
 )
-from analyze_conversation import (
-    analyze_conversation_with_roles,
-    analyze_summary
-)
+from Analyze_Conversation import analyze_conversation_with_roles
+from Analyze_Summary import analyze_summary
+from LLM_Workflow import llm_workflow
 
 # 配置日志输出
 logging.basicConfig(
@@ -233,6 +219,8 @@ if st.session_state.analysis_results:
         )
 
     with col2:
+        excel_filename = "电话开拓分析表_未知联系人.xlsx"  # 默认文件名
+        
         def generate_excel_report():
             try:
                 workbook = openpyxl.load_workbook(EXCEL_CONFIG["template_file"])
@@ -291,7 +279,21 @@ if st.session_state.analysis_results:
                             r'####\s*总分\s*\n\s*\*\*(\d+)/100\*\*',
                             r'总分\s*\n\s*\*\*(\d+)/100\*\*',
                             r'\*\*(\d+)/100\*\*',
-                            r'总分\s*\n\s*(\d+)'
+                            r'总分\s*\n\s*(\d+)',
+                            r'总分：\s*(\d+)分',
+                            r'总分\s*[:：]\s*(\d+)',
+                            r'总分计算[：:]\s*(?:[\s\S]*?)总分[：:]\s*(\d+)分',
+                            r'总分[：:]\s*(\d+)\/\d+',
+                            r'总分计算[：:]\s*(?:[\s\S]*?)总分[：:]\s*(\d+)\/\d+',
+                            r'[总总]分[：:]\s*(\d+)',
+                            r'总分\s*\n\s*总分[:：]\s*(?:.*?)=\s*(\d+)\s*分',
+                            r'总分[:：]\s*(?:.*?)=\s*(\d+)\s*分',
+                            r'总分\s*\n\s*(?:.*?)=\s*(\d+)\s*分',
+                            r'=\s*(\d+)\s*分',
+                            r'总分[:：]\s*\n\s*(\d+)分',
+                            r'总分[:：]\s*\n\s*(\d+)分/\d+分',
+                            r'总分[:：]\s*\n\s*(\d+)/\d+',
+                            r'总分[:：]\s*(\d+)分/\d+分'
                         ]
                         for pattern in score_patterns:
                             score_match = re.search(pattern, analysis_text)
@@ -299,9 +301,15 @@ if st.session_state.analysis_results:
                                 score = score_match.group(1)
                                 break
                         if not score:
-                            general_score_match = re.search(r'(\d+)/100', analysis_text)
-                            if general_score_match:
-                                score = general_score_match.group(1)
+                            try:
+                                # 查找各项评分并求和
+                                individual_scores = re.findall(r':\s*(\d+)分', analysis_text)
+                                if individual_scores and len(individual_scores) >= 5:  # 至少有5个评分项
+                                    total = sum(int(s) for s in individual_scores)
+                                    score = str(total)
+                                    logging.debug(f"通过各项分数求和得到总分: {score}")
+                            except:
+                                pass
                         suggestion = ""
                         suggestion_patterns = [
                             r'建议：\s*(.+?)(?:\n|$)',
@@ -438,13 +446,25 @@ if st.session_state.analysis_results:
                         worksheet.cell(summary_row, total_score_col).value = f"总评分：\n{avg_score}"
                         worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(wrapText=True)
                 
-                output = BytesIO()
-                workbook.save(output)
-                output.seek(0)
-                processed_data = output.getvalue()
-                return processed_data
+                # 获取第一个文件的联系人名称，如果没有则使用默认值
+                first_contact = contact_persons[0] if contact_persons and contact_persons[0] else "未知联系人"
+                
+                # 获取当前日期
+                from datetime import datetime
+                today_date = datetime.now().strftime("%Y%m%d")
+                
+                # 生成文件名
+                global excel_filename
+                excel_filename = f"电话开拓分析表_{first_contact}_{today_date}.xlsx"
+                
+                # 保存到内存中
+                excel_buffer = BytesIO()
+                workbook.save(excel_buffer)
+                excel_buffer.seek(0)
+                return excel_buffer
             except Exception as e:
-                st.error(f"处理Excel文件时出错: {str(e)}")
+                logging.error(f"生成Excel报告时出错: {e}")
+                st.error(f"生成Excel报告时出错: {e}")
                 return None
 
         excel_data = generate_excel_report()
@@ -452,6 +472,6 @@ if st.session_state.analysis_results:
             st.download_button(
                 label="📊 下载电话开拓分析表",
                 data=excel_data,
-                file_name="电话开拓分析表_已填写.xlsx",
+                file_name=excel_filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )

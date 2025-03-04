@@ -1,5 +1,8 @@
 #将voice_api_demo.py的json文件导出为完整的文件。
 import json
+import os
+import requests
+import urllib.parse
 
 
 def read_jsonfile(path, en='utf-8'):
@@ -27,6 +30,44 @@ def content_to_file(content, output_file_path):
         for lines in content:
             f.write(lines)
         f.close()
+
+
+class XunfeiASR:
+    def __init__(self, appid, signa, ts, file_path):
+        self.appid = appid
+        self.signa = signa
+        self.ts = ts
+        self.file_path = file_path
+
+    def process_audio(self):
+        # 上传文件
+        file_len = os.path.getsize(self.file_path)
+        file_name = os.path.basename(self.file_path)
+
+        param_dict = {
+            'appId': self.appid,
+            'signa': self.signa,
+            'ts': self.ts,
+            'fileSize': file_len,
+            'fileName': file_name,
+            'duration': "200",
+            'roleNum': 2,
+            'roleType': 1
+        }
+
+        # 修改这部分：直接读取二进制数据
+        data = open(self.file_path, 'rb').read(file_len)
+
+        upload_url = XFASR_HOST + '/upload'
+        response = requests.post(
+            url=upload_url + "?" + urllib.parse.urlencode(param_dict),
+            headers={"Content-type": "application/x-www-form-urlencoded"},  # 修改请求头
+            data=data
+        )
+        
+        result = json.loads(response.text)
+        if result.get('code') != 0:
+            raise Exception(f"上传失败: {result}")  # 修改错误信息显示完整结果
 
 
 if __name__ == '__main__':

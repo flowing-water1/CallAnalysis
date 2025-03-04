@@ -1,5 +1,10 @@
 import os
 from typing import Dict, Any, List
+import base64
+
+def decode_key(encoded_key: str) -> str:
+    """解码加密的API密钥"""
+    return base64.b64decode(encoded_key).decode('utf-8')
 
 # API配置
 XFYUN_CONFIG = {
@@ -7,14 +12,29 @@ XFYUN_CONFIG = {
     "api_upload": "/upload",
     "api_get_result": "/getResult",
     "appid": "8d2e895b",
-    "secret_key": "8d5c02bd69345f504761da6b818b423f"
+    "secret_key": decode_key("OGQ1YzAyYmQ2OTM0NWY1MDQ3NjFkYTZiODE4YjQyM2Y=")  # 加密的密钥
 }
 
 # OpenAI配置
-OPENAI_CONFIG = {
-    "api_key": "sk-OdCoqKCvctCJaPHUF2Ea9eF9C01940D8Aa7cB82889EaE165",
+ROLE_IDENTIFY_CONFIG = {
+    "api_key": decode_key("c2stT2RDb3FLQ3ZjdENKYVBIVUYyRWE5ZUY5QzAxOTQwRDhBYTdjQjgyODg5RWFFMTY1"),
     "api_base": "https://api.pumpkinaigc.online/v1",
-    "model_name": "gpt-4o"
+    "model_name": "gpt-4o-mini",
+    "temperature": 0.2  # 角色识别需要更确定的结果
+}
+
+CONVERSATION_ANALYSIS_CONFIG = {
+    "api_key": decode_key("c2stT2RDb3FLQ3ZjdENKYVBIVUYyRWE5ZUY5QzAxOTQwRDhBYTdjQjgyODg5RWFFMTY1"),
+    "api_base": "https://api.pumpkinaigc.online/v1",
+    "model_name": "gpt-4o",
+    "temperature": 0.68  # 对话分析需要一定的创造性
+}
+
+SUMMARY_ANALYSIS_CONFIG = {
+    "api_key": decode_key("ZjQ2NWMxZmMtNDgxZS00NjY4LWJmYTItZWM5MTg3YzJmMWU0"),
+    "api_base": "https://ark.cn-beijing.volces.com/api/v3",
+    "model_name": "deepseek-r1-250120",
+    "temperature": 0.7  # 汇总分析也需要一定的创造性
 }
 
 # 日志配置

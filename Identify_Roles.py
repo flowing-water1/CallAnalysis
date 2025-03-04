@@ -1,12 +1,10 @@
-import asyncio
 import json
 from typing import Dict, List
 from langchain_community.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
 
-from analyze_conversation import analyze_conversation_with_roles
-from config import OPENAI_CONFIG
+from config import ROLE_IDENTIFY_CONFIG
 from utils import format_conversation_with_roles
 
 def identify_roles(raw_text: str) -> dict:
@@ -22,10 +20,10 @@ def identify_roles(raw_text: str) -> dict:
     lines = raw_text.strip().split('\n')
     sample_dialogue = '\n'.join(lines[:10])
     llm = ChatOpenAI(
-        openai_api_key=OPENAI_CONFIG["api_key"],
-        openai_api_base=OPENAI_CONFIG["api_base"],
-        model_name=OPENAI_CONFIG["model_name"],
-        temperature=0.2
+        openai_api_key=ROLE_IDENTIFY_CONFIG["api_key"],
+        openai_api_base=ROLE_IDENTIFY_CONFIG["api_base"],
+        model_name=ROLE_IDENTIFY_CONFIG["model_name"],
+        temperature=ROLE_IDENTIFY_CONFIG["temperature"]
     )
     system_prompt = """
     你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
@@ -56,19 +54,4 @@ def identify_roles(raw_text: str) -> dict:
             "spk1": "未知角色1",
             "spk2": "未知角色2",
             "confidence": "low"
-        }
-
-async def llm_workflow(conversation_text: str) -> dict:
-    """
-    针对每个转写文件，先调用identify_roles，再调用analyze_conversation_with_roles，
-    形成一个完整的LLM工作流
-    
-    Args:
-        conversation_text: 对话文本
-        
-    Returns:
-        Dict: 分析结果
-    """
-    roles = await asyncio.to_thread(identify_roles, conversation_text)
-    analysis_result = await asyncio.to_thread(analyze_conversation_with_roles, conversation_text, roles)
-    return analysis_result 
+        } 
