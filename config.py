@@ -15,6 +15,19 @@ XFYUN_CONFIG = {
     "secret_key": decode_key("OGQ1YzAyYmQ2OTM0NWY1MDQ3NjFkYTZiODE4YjQyM2Y=")  # 加密的密钥
 }
 
+# 火山引擎配置 - 直接使用原始值，不进行额外加密
+VOLCANO_CONFIG = {
+    "appid": "6164066630", 
+    "token": "FRxS8saaoV7MNf1Z4-u_UDZzygInc-WW",
+    "tos": {
+        "ak": "AKLTNjE5MzU4OWExNjQ3NDc1Njk0YzEwNzk3YWE0YzA0YTI",
+        "sk": "TTJKaVl6WTNZMk01WkRkaE5EQTVOVGhtT1dJNFptSXdOemd4T0dVeU16VQ==",
+        "endpoint": "tos-cn-guangzhou.volces.com",
+        "region": "cn-guangzhou",
+        "bucket_name": "call-analysis0"
+    }
+}
+
 # OpenAI配置
 ROLE_IDENTIFY_CONFIG = {
     "api_key": decode_key("c2stT2RDb3FLQ3ZjdENKYVBIVUYyRWE5ZUY5QzAxOTQwRDhBYTdjQjgyODg5RWFFMTY1"),
@@ -26,7 +39,7 @@ ROLE_IDENTIFY_CONFIG = {
 CONVERSATION_ANALYSIS_CONFIG = {
     "api_key": decode_key("c2stT2RDb3FLQ3ZjdENKYVBIVUYyRWE5ZUY5QzAxOTQwRDhBYTdjQjgyODg5RWFFMTY1"),
     "api_base": "https://api.pumpkinaigc.online/v1",
-    "model_name": "gpt-4o",
+    "model_name": "deepseek-v3",
     "temperature": 0.68  # 对话分析需要一定的创造性
 }
 

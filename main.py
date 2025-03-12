@@ -7,9 +7,6 @@ import re
 import openpyxl
 from config import LOGGING_CONFIG, EXCEL_CONFIG
 from Audio_Recognition import (
-    upload_files_async,
-    get_transcription_result_async,
-    merge_result_for_one_vad,
     process_file,
     process_all_files
 )
@@ -293,7 +290,11 @@ if st.session_state.analysis_results:
                             r'总分[:：]\s*\n\s*(\d+)分',
                             r'总分[:：]\s*\n\s*(\d+)分/\d+分',
                             r'总分[:：]\s*\n\s*(\d+)/\d+',
-                            r'总分[:：]\s*(\d+)分/\d+分'
+                            r'总分[:：]\s*(\d+)分/\d+分',
+                            r'【总分】\s*(\d+)\s*分',
+                            r'【总分】\s*(\d+)/\d+',
+                            r'【总分】\s*(\d+)分/\d+分',
+                            r'【总分】\s*(\d+)'
                         ]
                         for pattern in score_patterns:
                             score_match = re.search(pattern, analysis_text)

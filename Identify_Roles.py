@@ -26,7 +26,7 @@ def identify_roles(raw_text: str) -> dict:
         temperature=ROLE_IDENTIFY_CONFIG["temperature"]
     )
     system_prompt = """
-    你是一位专业的对话分析专家。请分析以下对话内容，识别出spk1和spk2各自的角色（销售还是客户）。
+    你是一位专业的对话分析专家。请分析以下对话内容，识别出 说话人1 和 说话人2 各自的角色（销售还是客户）。
 
     判断依据：
     1. 说话方式和语气（销售通常更主动、更正式）
