@@ -51,7 +51,7 @@ def tutorial():
     st.markdown("### 使用流程")
     st.markdown("#### 0️⃣ 选择名字")
     st.markdown("选择自己的名字")
-    st.markdown("tutorial/名字.png")
+    st.image("tutorial/名字.png")
 
     st.markdown("#### 1️⃣ 上传文件")
     st.markdown("点击下方按钮上传您的通话录音文件：")
@@ -65,7 +65,7 @@ def tutorial():
 
     st.markdown("#### 2️⃣-1️⃣ 倘若今天已经上传过一次")
     st.markdown("可以选择“覆盖数据库中的信息”，也可以将当前的数据“追加到数据库中”")
-    st.markdown("tutorial/名字.png")
+    st.image("tutorial/名字.png")
     st.markdown("#### 3️⃣ 开始分析流程")
     st.markdown("点击 :blue[**\"开始分析\"**] 按钮启动处理：")
     st.image("tutorial/开始分析.png")
@@ -139,7 +139,7 @@ if not st.session_state.tutorial_shown:
     st.session_state.tutorial_shown = True
 
 # 销售人员选择区域
-st.markdown("### 👤 请选择您的姓名")
+st.markdown("### 🙋🏻‍♂️ 请选择您的姓名")
 
 # 获取销售人员列表
 try:
