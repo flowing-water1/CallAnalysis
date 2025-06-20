@@ -2,10 +2,14 @@ import streamlit as st
 import os
 import asyncio
 import logging
+import concurrent.futures
 from io import BytesIO
 import re
 import openpyxl
-from config import LOGGING_CONFIG, EXCEL_CONFIG
+from datetime import date, datetime
+import pytz
+from config import LOGGING_CONFIG, EXCEL_CONFIG, DATABASE_CONFIG
+from database_utils import SyncDatabaseManager
 from Audio_Recognition import (
     process_file,
     process_all_files
@@ -17,12 +21,24 @@ from Identify_Roles import (
 from Analyze_Conversation import analyze_conversation_with_roles
 from Analyze_Summary import analyze_summary
 from LLM_Workflow import llm_workflow
+from extract_utils import extract_all_conversation_data, extract_all_summary_data, parse_filename_intelligently
+import json
 
 # 配置日志输出
 logging.basicConfig(
     level=getattr(logging, LOGGING_CONFIG["level"]), 
     format=LOGGING_CONFIG["format"]
 )
+logger = logging.getLogger(__name__)
+
+def run_async_process(coro):
+    """专门用于运行process_all_files的异步包装器"""
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        return loop.run_until_complete(coro)
+    finally:
+        loop.close()
 
 @st.dialog(title="欢迎使用通话分析工具！", width="large")
 def tutorial():
@@ -96,79 +112,243 @@ if 'analysis_completed' not in st.session_state:
     st.session_state.analysis_completed = False  # 用来标记分析是否完成
 if 'tutorial_shown' not in st.session_state:
     st.session_state.tutorial_shown = False
+if 'db_manager' not in st.session_state:
+    st.session_state.db_manager = None
+if 'salesperson_id' not in st.session_state:
+    st.session_state.salesperson_id = None
+if 'salesperson_name' not in st.session_state:
+    st.session_state.salesperson_name = None
+if 'upload_choice' not in st.session_state:
+    st.session_state.upload_choice = None
 
-
-    
-
+# 初始化数据库管理器
+@st.cache_resource
+def get_db_manager():
+    """获取数据库管理器实例（缓存）"""
+    return SyncDatabaseManager(DATABASE_CONFIG)
 
 # 仅在第一次加载页面且教程未显示过时显示教程
 if not st.session_state.tutorial_shown:
     tutorial()
     st.session_state.tutorial_shown = True
 
-uploaded_files = st.file_uploader(
-    "请上传通话录音文件",
-    type=['wav', 'mp3', 'm4a', 'ogg'],
-    accept_multiple_files=True
-)
+# 销售人员选择区域
+st.markdown("### 👤 请选择您的姓名")
+
+# 获取销售人员列表
+try:
+    db_manager = get_db_manager()
+    salespersons = db_manager.get_salespersons()
+    salesperson_names = ["请选择..."] + [sp['name'] for sp in salespersons]
+    
+    # 销售人员下拉选择框
+    selected_name = st.selectbox(
+        "选择销售人员",
+        options=salesperson_names,
+        key="salesperson_select",
+        help="请从下拉列表中选择您的姓名"
+    )
+    
+    # 如果选择了有效的销售人员
+    if selected_name != "请选择...":
+        # 查找对应的销售人员ID
+        selected_person = next((sp for sp in salespersons if sp['name'] == selected_name), None)
+        if selected_person:
+            st.session_state.salesperson_id = selected_person['id']
+            st.session_state.salesperson_name = selected_person['name']
+            st.success(f"已选择：{selected_name}")
+        else:
+            st.error("选择的销售人员不存在")
+    else:
+        st.session_state.salesperson_id = None
+        st.session_state.salesperson_name = None
+        
+except Exception as e:
+    st.error(f"获取销售人员列表失败：{str(e)}")
+    st.info("请检查数据库连接是否正常")
+
+# 只有选择了销售人员才能上传文件
+if st.session_state.salesperson_id:
+    st.markdown("---")
+    st.markdown("### 📁 上传通话文件")
+    
+    uploaded_files = st.file_uploader(
+        "请上传通话录音文件",
+        type=['wav', 'mp3', 'm4a', 'ogg'],
+        accept_multiple_files=True
+    )
+else:
+    st.warning("⚠️ 请先选择您的姓名后才能上传文件")
+    uploaded_files = None
 
 if uploaded_files and not st.session_state.analysis_completed:
     st.write("已上传的文件:")
     for file in uploaded_files:
         st.write(f"- {file.name}")
+    
+    # 检查是否已有今日记录
+    db_manager = get_db_manager()
+    today = date.today()
+    
+    try:
+        has_existing_record = db_manager.check_daily_record_exists(
+            st.session_state.salesperson_id, 
+            today
+        )
+        
+        if has_existing_record and st.session_state.upload_choice is None:
+            st.warning(f"⚠️ {st.session_state.salesperson_name} 今天已有上传记录")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("覆盖现有数据", type="primary"):
+                    st.session_state.upload_choice = "overwrite"
+                    st.rerun()
+            with col2:
+                if st.button("追加到现有数据"):
+                    st.session_state.upload_choice = "append"
+                    st.rerun()
+            with col3:
+                if st.button("取消本次上传", type="secondary"):
+                    st.session_state.upload_choice = "cancel"
+                    st.session_state.analysis_completed = True
+                    st.rerun()
+                    
+        # 如果选择了取消，不显示分析按钮
+        if st.session_state.upload_choice == "cancel":
+            st.info("已取消本次上传")
+        elif not has_existing_record or st.session_state.upload_choice in ["overwrite", "append"]:
+            if st.button("开始分析", key="start_analysis"):
+                with st.spinner("正在处理文件..."):
+                    progress_placeholder = st.empty()
+                    # 保存上传的文件到临时文件夹
+                    temp_files = []
+                    for uploaded_file in uploaded_files:
+                        # 确保临时文件夹存在
+                        os.makedirs("temp", exist_ok=True)
+                        temp_path = os.path.join("temp", f"temp_{uploaded_file.name}")
+                        with open(temp_path, "wb") as f:
+                            f.write(uploaded_file.getbuffer())
+                        temp_files.append(temp_path)
 
-    if st.button("开始分析", key="start_analysis"):
-        with st.spinner("正在处理文件..."):
-            progress_placeholder = st.empty()
-            # 保存上传的文件到临时文件夹
-            temp_files = []
-            for uploaded_file in uploaded_files:
-                # 确保临时文件夹存在
-                os.makedirs("temp", exist_ok=True)
-                temp_path = os.path.join("temp", f"temp_{uploaded_file.name}")
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                temp_files.append(temp_path)
+                    try:
+                        results = run_async_process(process_all_files(temp_files, progress_placeholder))
+                        st.session_state.analysis_results = results
 
-            try:
-                results = asyncio.run(process_all_files(temp_files, progress_placeholder))
-                st.session_state.analysis_results = results
+                        # 生成汇总分析并保存，同时更新进度条（汇总分析占 20%）
+                        phase_text = progress_placeholder.empty()
+                        phase_text.markdown("**🔄 正在生成汇总分析...**")
+                        progress_bar = progress_placeholder.progress(0.9)
+                        st.session_state.summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
+                        progress_bar.progress(1.0)
+                        phase_text.markdown("**✅ 所有文件处理完成！**")
 
-                # 生成汇总分析并保存，同时更新进度条（汇总分析占 20%）
-                phase_text = progress_placeholder.empty()
-                phase_text.markdown("**🔄 正在生成汇总分析...**")
-                progress_bar = progress_placeholder.progress(0.9)
-                st.session_state.summary_analysis = analyze_summary([res for res in results if res["status"] == "success"])
-                progress_bar.progress(1.0)
-                phase_text.markdown("**✅ 所有文件处理完成！**")
+                        # 生成完整报告并保存
+                        combined_report = ""
+                        for idx, res in enumerate(results, 1):
+                            if res["status"] == "success" and res["analysis_result"].get("status") == "success":
+                                combined_report += f"\n\n{'=' * 50}\n对话记录 {idx}：\n{'=' * 50}\n\n"
+                                combined_report += res["analysis_result"]["formatted_text"]
+                                combined_report += f"\n\n{'=' * 50}\n分析结果 {idx}：\n{'=' * 50}\n\n"
+                                combined_report += res["analysis_result"]["analysis"]
 
-                # 生成完整报告并保存
-                combined_report = ""
-                for idx, res in enumerate(results, 1):
-                    if res["status"] == "success" and res["analysis_result"].get("status") == "success":
-                        combined_report += f"\n\n{'=' * 50}\n对话记录 {idx}：\n{'=' * 50}\n\n"
-                        combined_report += res["analysis_result"]["formatted_text"]
-                        combined_report += f"\n\n{'=' * 50}\n分析结果 {idx}：\n{'=' * 50}\n\n"
-                        combined_report += res["analysis_result"]["analysis"]
+                        combined_report += f"\n\n{'=' * 50}\n汇总分析报告：\n{'=' * 50}\n\n"
+                        combined_report += st.session_state.summary_analysis
+                        st.session_state.combined_report = combined_report
+                        
+                        # 保存分析结果到数据库
+                        phase_text.markdown("**💾 正在保存分析结果到数据库...**")
+                        try:
+                            # 准备数据
+                            call_details_list = []
+                            for res in results:
+                                if res["status"] == "success" and res["analysis_result"].get("status") == "success":
+                                    # 解析文件名
+                                    file_name = os.path.basename(res["file_path"])
+                                    file_name = re.sub(r'^temp_', '', file_name)
+                                    file_name_without_ext = os.path.splitext(file_name)[0]
+                                    
+                                    # 使用智能文件名解析
+                                    company_name, contact_person, phone_number = parse_filename_intelligently(file_name_without_ext)
+                                    
+                                    # 获取对话文本
+                                    conversation_text = res["analysis_result"]["formatted_text"]
+                                    
+                                    # 提取分析数据
+                                    analysis_text = res["analysis_result"]["analysis"]
+                                    extracted_data = extract_all_conversation_data(analysis_text)
+                                    
+                                    # 判断是否有效通话
+                                    score = None
+                                    if extracted_data["score"]:
+                                        try:
+                                            score = float(extracted_data["score"])
+                                        except ValueError:
+                                            pass
+                                    
+                                    is_effective = score is not None and score >= 60
+                                    
+                                    # 准备分析结果的JSON格式
+                                    analysis_result_json = {
+                                        "roles": res["analysis_result"].get("roles", {}),
+                                        "analysis": analysis_text,
+                                        "extracted_data": extracted_data,
+                                        "suggestions": extracted_data["suggestion"]
+                                    }
+                                    
+                                    # 准备单条通话详情（使用新字段名）
+                                    call_detail = {
+                                        'original_filename': file_name,
+                                        'company_name': company_name,
+                                        'contact_person': contact_person,
+                                        'phone_number': phone_number,
+                                        'conversation_text': conversation_text,
+                                        'analysis_text': analysis_text,
+                                        'score': score,
+                                        'is_effective': is_effective,
+                                        'suggestions': extracted_data.get("suggestion", "")
+                                    }
+                                    
+                                    call_details_list.append(call_detail)
+                            
+                            # 保存到数据库
+                            save_success = db_manager.save_analysis_data(
+                                st.session_state.salesperson_id,
+                                call_details_list,
+                                st.session_state.summary_analysis,
+                                st.session_state.upload_choice
+                            )
+                            
+                            if save_success:
+                                phase_text.markdown("**✅ 分析结果已成功保存到数据库！**")
+                            else:
+                                st.warning("分析结果保存到数据库时出现问题，但您仍可以下载报告")
+                        except Exception as db_error:
+                            st.error(f"保存到数据库失败：{str(db_error)}")
+                            st.info("您仍然可以下载分析报告")
 
-                combined_report += f"\n\n{'=' * 50}\n汇总分析报告：\n{'=' * 50}\n\n"
-                combined_report += st.session_state.summary_analysis
-                st.session_state.combined_report = combined_report
+                        st.session_state.analysis_completed = True  # 标记分析完成
 
-                st.session_state.analysis_completed = True  # 标记分析完成
+                    except Exception as e:
+                        st.error(f"处理过程中出现错误：{str(e)}")
+                    finally:
+                        # 清理临时文件
+                        for temp_file in temp_files:
+                            if os.path.exists(temp_file):
+                                os.remove(temp_file)
+                        # 尝试删除临时文件夹
+                        try:
+                            os.rmdir("temp")
+                        except OSError:
+                            pass  # 如果文件夹不为空或不存在，忽略错误
 
-            except Exception as e:
-                st.error(f"处理过程中出现错误：{str(e)}")
-            finally:
-                # 清理临时文件
-                for temp_file in temp_files:
-                    if os.path.exists(temp_file):
-                        os.remove(temp_file)
-                # 尝试删除临时文件夹
-                try:
-                    os.rmdir("temp")
-                except OSError:
-                    pass  # 如果文件夹不为空或不存在，忽略错误
+    except Exception as e:
+        st.error(f"检查数据库记录时出错：{str(e)}")
+        has_existing_record = False
+        # 即使出错也允许继续分析
+        if st.button("开始分析", key="start_analysis"):
+            with st.spinner("正在处理文件..."):
+                progress_placeholder = st.empty()
 
 if st.session_state.analysis_results:
     tab1, tab2, tab3 = st.tabs(["📝 所有对话记录", "📊 所有分析结果", "📈 汇总分析"])
@@ -231,128 +411,19 @@ if st.session_state.analysis_results:
                         file_name = re.sub(r'^temp_', '', file_name)
                         file_name = os.path.splitext(file_name)[0]
                         
-                        # 提取公司名称、联系人、电话号码
-                        # 尝试匹配新格式: "公司名-联系人-电话号码"
-                        pattern = r'^(.*?)-(.*?)-(.*)$'
-                        match = re.match(pattern, file_name)
-                        
-                        company_name = ""
-                        contact_person = ""
-                        phone_number = ""
-                        
-                        if match:
-                            # 新格式
-                            company_name = match.group(1).strip()
-                            contact_person = match.group(2).strip()
-                            raw_phone = match.group(3).strip()
-                            
-                            # 清理电话号码中的空格和连字符
-                            phone_number = re.sub(r'[\s-]', '', raw_phone)
-                        else:
-                            # 旧格式兼容: "公司名-电话号码"
-                            old_pattern = r'^(.*?)-(.*?)$'
-                            old_match = re.match(old_pattern, file_name)
-                            if old_match:
-                                company_name = old_match.group(1).strip()
-                                raw_phone = old_match.group(2).strip()
-                                phone_number = re.sub(r'[\s-]', '', raw_phone)
-                            else:
-                                # 如果两种格式都不匹配，直接使用文件名作为公司名
-                                company_name = file_name
+                        # 使用智能文件名解析
+                        company_name, contact_person, phone_number = parse_filename_intelligently(file_name)
                         
                         file_names.append(company_name)
                         contact_persons.append(contact_person)
                         
-                        # 提取评分和建议
+                        # 使用新的精确提取函数
                         analysis_text = res["analysis_result"]["analysis"]
-                        score = ""
-                        score_patterns = [
-                            r'总分\s*\n\s*####\s*(\d+)/100',
-                            r'总分\s*\n\s*总分：\s*(\d+)/100',
-                            r'总分\s*\n\s*(\d+)/100',
-                            r'总分：\s*(\d+)/100',
-                            r'总分\s*(\d+)/100',
-                            r'总分：?\s*(\d+)',
-                            r'####\s*总分\s*\n\s*\*\*(\d+)/100\*\*',
-                            r'总分\s*\n\s*\*\*(\d+)/100\*\*',
-                            r'\*\*(\d+)/100\*\*',
-                            r'总分\s*\n\s*(\d+)',
-                            r'总分：\s*(\d+)分',
-                            r'总分\s*[:：]\s*(\d+)',
-                            r'总分计算[：:]\s*(?:[\s\S]*?)总分[：:]\s*(\d+)分',
-                            r'总分[：:]\s*(\d+)\/\d+',
-                            r'总分计算[：:]\s*(?:[\s\S]*?)总分[：:]\s*(\d+)\/\d+',
-                            r'[总总]分[：:]\s*(\d+)',
-                            r'总分\s*\n\s*总分[:：]\s*(?:.*?)=\s*(\d+)\s*分',
-                            r'总分[:：]\s*(?:.*?)=\s*(\d+)\s*分',
-                            r'总分\s*\n\s*(?:.*?)=\s*(\d+)\s*分',
-                            r'=\s*(\d+)\s*分',
-                            r'总分[:：]\s*\n\s*(\d+)分',
-                            r'总分[:：]\s*\n\s*(\d+)分/\d+分',
-                            r'总分[:：]\s*\n\s*(\d+)/\d+',
-                            r'总分[:：]\s*(\d+)分/\d+分',
-                            r'【总分】\s*(\d+)\s*分',
-                            r'【总分】\s*(\d+)/\d+',
-                            r'【总分】\s*(\d+)分/\d+分',
-                            r'【总分】\s*(\d+)'
-                        ]
-                        for pattern in score_patterns:
-                            score_match = re.search(pattern, analysis_text)
-                            if score_match:
-                                score = score_match.group(1)
-                                break
-                        if not score:
-                            try:
-                                # 查找各项评分并求和
-                                individual_scores = re.findall(r':\s*(\d+)分', analysis_text)
-                                if individual_scores and len(individual_scores) >= 5:  # 至少有5个评分项
-                                    total = sum(int(s) for s in individual_scores)
-                                    score = str(total)
-                                    logging.debug(f"通过各项分数求和得到总分: {score}")
-                            except:
-                                pass
-                        suggestion = ""
-                        suggestion_patterns = [
-                            r'建议：\s*(.+?)(?:\n|$)',
-                            r'建议：\s*\*\*(.+?)\*\*',
-                            r'建议：\s*(.+?)\*\*',
-                            r'建议：\s*(.+)',
-                            r'改进点：.+?\n\s*建议：\s*(.+?)(?:\n|$)',
-                            r'\*\*建议\*\*：\s*(.+?)(?:\n|$)',
-                            r'\*\*建议\*\*：\s*(.+)',
-                            r'总结\s*\n\s*\d+\.\s*改进点.+?\n\s*建议：\s*(.+?)(?:\n|$)',
-                            r'总结\s*\n\s*\d+\.\s*改进点.+?\n\s*\*\*建议\*\*：\s*(.+?)(?:\n|$)',
-                            r'总结\s*\n\s*\d+\.\s*改进点：.+?\n\s*- \*\*建议\*\*：\s*(.+?)(?:\n|$)',
-                            r'总结\s*\n\s*\d+\.\s*改进点：.+?\n\s*- 建议：\s*(.+?)(?:\n|$)',
-                            r'建议\s*(.+?)(?:\n|$)'
-                        ]
-                        for pattern in suggestion_patterns:
-                            suggestion_match = re.search(pattern, analysis_text)
-                            if suggestion_match:
-                                suggestion = suggestion_match.group(1).strip()
-                                suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
-                                suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
-                                break
-                        if not suggestion:
-                            summary_section = re.search(r'总结.*?(?:\n|$)(.*?)(?=##|\Z)', analysis_text, re.DOTALL)
-                            if summary_section:
-                                summary_text = summary_section.group(1)
-                                dash_content = re.search(r'-\s*(.+?)(?:\n|$)', summary_text)
-                                if dash_content:
-                                    suggestion = dash_content.group(1).strip()
-                                    suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
-                                    suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
-                        if not suggestion:
-                            summary_match = re.search(r'总结.*?(?:\n|$)(.*?)(?=\n\n|\Z)', analysis_text, re.DOTALL)
-                            if summary_match:
-                                first_sentence = re.search(r'[^.!?。！？]+[.!?。！？]', summary_match.group(1))
-                                if first_sentence:
-                                    suggestion = first_sentence.group(0).strip()
-                                    suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
-                                    suggestion = re.sub(r'\*(.+?)\*', r'\1', suggestion)
+                        extracted_data = extract_all_conversation_data(analysis_text)
+                        
                         analysis_data.append({
-                            "score": score, 
-                            "suggestion": suggestion, 
+                            "score": extracted_data["score"], 
+                            "suggestion": extracted_data["suggestion"], 
                             "phone_number": phone_number,
                             "contact_person": contact_person
                         })
@@ -394,31 +465,20 @@ if st.session_state.analysis_results:
                 
                 # 处理总结部分
                 if st.session_state.summary_analysis:
-                    avg_score = ""
-                    avg_score_patterns = [
-                        r'平均评分[^\d]*(\d+\.?\d*)',
-                        r'平均评分：\s*(\d+\.?\d*)',
-                        r'平均[^\d]*(\d+\.?\d*)',
-                        r'平均分[^\d]*(\d+\.?\d*)'
-                    ]
-                    for pattern in avg_score_patterns:
-                        avg_score_match = re.search(pattern, st.session_state.summary_analysis)
-                        if avg_score_match:
-                            avg_score = avg_score_match.group(1)
-                            break
-                    suggestions = []
-                    list_items = re.findall(r'- (.+?)(?:\n|$)', st.session_state.summary_analysis)
-                    if list_items:
-                        suggestions.extend(list_items)
-                    if not suggestions:
-                        numbered_items = re.findall(r'\d+\.\s+(.+?)(?:\n|$)', st.session_state.summary_analysis)
-                        if numbered_items:
-                            suggestions.extend(numbered_items)
-                    formatted_suggestions = "改进建议：\n"
-                    for suggestion in suggestions:
-                        clean_suggestion = re.sub(r'\*\*(.+?)\*\*', r'\1', suggestion)
-                        clean_suggestion = re.sub(r'\*(.+?)\*', r'\1', clean_suggestion)
-                        formatted_suggestions += f"- {clean_suggestion}\n"
+                    # 使用新的精确提取函数
+                    summary_data = extract_all_summary_data(st.session_state.summary_analysis)
+                    avg_score = summary_data["average_score"]
+                    improvement_measures = summary_data["improvement_measures"]
+                    
+                    # 格式化改进措施
+                    formatted_suggestions = ""
+                    if improvement_measures:
+                        formatted_suggestions = "改进建议：\n"
+                        for measure in improvement_measures:
+                            formatted_suggestions += f"- {measure}\n"
+                    else:
+                        # 如果没有提取到措施，使用原始内容的前几行作为备选
+                        formatted_suggestions = "改进建议：\n- 请查看详细分析报告"
                     
                     # 找到总结行
                     summary_row = None
@@ -434,6 +494,12 @@ if st.session_state.analysis_results:
                     
                     if formatted_suggestions:
                         worksheet.cell(summary_row, 2).value = formatted_suggestions
+                        # 设置改进建议单元格对齐方式：顶部对齐 + 自动换行
+                        worksheet.cell(summary_row, 2).alignment = openpyxl.styles.Alignment(
+                            wrapText=True, 
+                            vertical='top',
+                            horizontal='left'
+                        )
                     
                     # 查找总评分列
                     total_score_col = None
@@ -445,7 +511,12 @@ if st.session_state.analysis_results:
                     
                     if total_score_col and avg_score:
                         worksheet.cell(summary_row, total_score_col).value = f"总评分：\n{avg_score}"
-                        worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(wrapText=True)
+                        # 设置单元格对齐方式：顶部对齐 + 自动换行
+                        worksheet.cell(summary_row, total_score_col).alignment = openpyxl.styles.Alignment(
+                            wrapText=True, 
+                            vertical='top',
+                            horizontal='left'
+                        )
                 
                 # 获取第一个文件的联系人名称，如果没有则使用默认值
                 first_contact = contact_persons[0] if contact_persons and contact_persons[0] else "未知联系人"

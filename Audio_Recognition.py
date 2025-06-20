@@ -265,11 +265,10 @@ def save_to_txt(result_json: Dict[str, Any], output_file: str) -> None:
                 
                 f.write(f"说话人 {speaker} [{start_time:.2f}s-{end_time:.2f}s]: {text}\n")
         
-        # 写入音频信息
-        if 'audio_info' in result_json:
-            f.write("\n【音频信息】\n")
-            duration = result_json['audio_info'].get('duration', 0) / 1000  # 毫秒转秒
-            f.write(f"总时长: {duration:.2f}秒\n")
+        # 写入音频信息（使用改进的时长提取逻辑）
+        f.write("\n【音频信息】\n")
+        duration_seconds = extract_duration_from_result(result_json)
+        f.write(f"总时长: {duration_seconds:.2f}秒\n")
         
         # 添加讯飞格式的转写结果用于LLM处理
         if 'result' in result_json and 'utterances' in result_json['result']:
@@ -286,6 +285,78 @@ def save_to_txt(result_json: Dict[str, Any], output_file: str) -> None:
                 spk_prefix = speakers.get(speaker_id, "spk1")
                 text = utterance.get('text', '')
                 f.write(f"{spk_prefix}##{text}\n")
+
+def extract_duration_from_result(result_json: Dict[str, Any]) -> float:
+    """
+    从转写结果中提取音频时长
+    
+    Args:
+        result_json: 火山引擎转写结果JSON
+        
+    Returns:
+        float: 音频时长（秒）
+    """
+    duration_seconds = 0
+    
+    # 详细记录输入数据结构用于调试
+    logging.debug(f"extract_duration_from_result 输入数据: {json.dumps(result_json, indent=2, ensure_ascii=False)[:500]}...")
+    
+    # 方法1: 从audio_info.duration获取
+    if 'audio_info' in result_json and 'duration' in result_json['audio_info']:
+        duration_ms = result_json['audio_info'].get('duration', 0)
+        if duration_ms > 0:
+            duration_seconds = duration_ms / 1000  # 毫秒转秒
+            logging.info(f"✅ 从audio_info获取时长: {duration_seconds:.2f}秒")
+            return duration_seconds
+    
+    # 方法2: 从utterances的最大end_time计算
+    if 'result' in result_json and 'utterances' in result_json['result']:
+        utterances = result_json['result']['utterances']
+        if utterances and len(utterances) > 0:
+            max_end_time = 0
+            for utterance in utterances:
+                end_time = utterance.get('end_time', 0)
+                if end_time > max_end_time:
+                    max_end_time = end_time
+            
+            if max_end_time > 0:
+                duration_seconds = max_end_time / 1000  # 毫秒转秒
+                logging.info(f"✅ 从utterances计算时长: {duration_seconds:.2f}秒")
+                return duration_seconds
+    
+    # 方法3: 检查其他可能的字段
+    if 'duration' in result_json:
+        duration_value = result_json['duration']
+        if isinstance(duration_value, (int, float)) and duration_value > 0:
+            # 判断单位（如果值很大可能是毫秒，否则可能是秒）
+            if duration_value > 1000:  # 假设超过1000的是毫秒
+                duration_seconds = duration_value / 1000
+            else:
+                duration_seconds = duration_value
+            logging.info(f"✅ 从根级duration字段获取时长: {duration_seconds:.2f}秒")
+            return duration_seconds
+    
+    # 方法4: 如果转写结果中有文本，估算时长（作为最后的备选方案）
+    if 'result' in result_json and 'text' in result_json['result']:
+        text = result_json['result']['text']
+        if text:
+            # 根据文本长度粗略估算时长（每分钟大约150-200字）
+            estimated_duration = len(text) / 3  # 粗略估算：每3个字符约1秒
+            if estimated_duration > 0:
+                logging.warning(f"⚠️ 使用文本长度估算时长: {estimated_duration:.2f}秒 (文本长度: {len(text)}字符)")
+                return estimated_duration
+    
+    # 如果所有方法都失败，记录详细警告信息
+    logging.error(f"❌ 无法从转写结果中提取时长信息！")
+    logging.error(f"result_json 主要字段: {list(result_json.keys())}")
+    if 'result' in result_json:
+        logging.error(f"result 字段内容: {list(result_json['result'].keys())}")
+    if 'audio_info' in result_json:
+        logging.error(f"audio_info 字段内容: {result_json['audio_info']}")
+    
+    # 如果完全无法获取时长，返回一个很小的正值，避免显示0秒
+    logging.warning("使用默认时长1秒")
+    return 1.0  # 返回1秒而不是0秒
 
 async def process_file(file_path: str) -> Dict[str, Any]:
     """
@@ -353,9 +424,16 @@ async def process_file(file_path: str) -> Dict[str, Any]:
         with open(output_file_path, 'r', encoding='utf-8') as f:
             conversation_text = f.read()
         
+        # 7.1 改进的音频时长提取
+        duration_seconds = extract_duration_from_result(result_json)
+        logging.debug(f"提取到的音频时长: {duration_seconds:.2f}秒")
+        
+        # 7.2 判断是否为有效通话（时长>=60秒）
+        is_valid_call = duration_seconds >= 60
+        
         # 8. 调用LLM工作流进行分析
-        logging.debug(f"开始调用LLM工作流分析，文件 {file_path}")
-        analysis_result = await llm_workflow(conversation_text)
+        logging.debug(f"开始调用LLM工作流分析，文件 {file_path}，时长 {duration_seconds:.2f}秒，有效通话: {is_valid_call}")
+        analysis_result = await llm_workflow(conversation_text, duration_seconds, is_valid_call)
         logging.debug(f"LLM工作流分析完成，文件 {file_path}")
         
         return {
@@ -363,7 +441,9 @@ async def process_file(file_path: str) -> Dict[str, Any]:
             "status": "success",
             "analysis_result": analysis_result,
             "conversation_text": conversation_text,
-            "output_file_path": output_file_path
+            "output_file_path": output_file_path,
+            "duration_seconds": duration_seconds,
+            "is_valid_call": is_valid_call
         }
     
     except Exception as e:

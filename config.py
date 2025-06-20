@@ -28,26 +28,79 @@ VOLCANO_CONFIG = {
     }
 }
 
+# PostgreSQL 数据库配置
+DATABASE_CONFIG = {
+    # 基础连接参数
+    "host": "117.72.54.192",
+    "port": 5432,  # PostgreSQL默认端口
+    "database": "callanalysis",
+    "username": "callanalysis",
+    "password": "callanalysis",  # 加密存储密码
+    
+    # 连接URL格式（同步）
+    "sync_url": f"postgresql://callanalysis:callanalysis@117.72.54.192:5432/callanalysis",
+    
+    # 连接URL格式（异步，推荐用于Streamlit应用）
+    "async_url": f"postgresql+asyncpg://callanalysis:callanalysis@117.72.54.192:5432/callanalysis",
+    
+    # 连接池配置
+    "pool_config": {
+        "min_size": 1,      # 最小连接数
+        "max_size": 10,     # 最大连接数
+        "max_queries": 50000,  # 每个连接最大查询数
+        "max_inactive_connection_lifetime": 300,  # 非活跃连接生命周期（秒）
+        "timeout": 60,      # 连接超时（秒）
+        "command_timeout": 60,  # 命令超时（秒）
+    },
+    
+    # SSL配置（生产环境建议开启）
+    "ssl_config": {
+        "ssl": "prefer",  # 可选值: disable, allow, prefer, require, verify-ca, verify-full
+        "sslmode": "prefer"
+    },
+    
+    # 连接选项
+    "connect_args": {
+        "server_settings": {
+            "jit": "off",  # 关闭JIT以提高连接速度
+            "application_name": "call_analysis_app"  # 应用标识
+        }
+    }
+}
+
 # OpenAI配置
 ROLE_IDENTIFY_CONFIG = {
-    "api_key": decode_key("c2stT2RDb3FLQ3ZjdENKYVBIVUYyRWE5ZUY5QzAxOTQwRDhBYTdjQjgyODg5RWFFMTY1"),
+    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
     "api_base": "https://api.pumpkinaigc.online/v1",
-    "model_name": "gpt-4o-mini",
+    "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.2  # 角色识别需要更确定的结果
 }
 
 CONVERSATION_ANALYSIS_CONFIG = {
-    "api_key": decode_key("c2stT2RDb3FLQ3ZjdENKYVBIVUYyRWE5ZUY5QzAxOTQwRDhBYTdjQjgyODg5RWFFMTY1"),
+    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
     "api_base": "https://api.pumpkinaigc.online/v1",
-    "model_name": "deepseek-v3",
+    "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.68  # 对话分析需要一定的创造性
 }
 
 SUMMARY_ANALYSIS_CONFIG = {
-    "api_key": decode_key("ZjQ2NWMxZmMtNDgxZS00NjY4LWJmYTItZWM5MTg3YzJmMWU0"),
-    "api_base": "https://ark.cn-beijing.volces.com/api/v3",
-    "model_name": "deepseek-r1-250120",
+    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
+    "api_base": "https://api.pumpkinaigc.online/v1",
+    "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.7  # 汇总分析也需要一定的创造性
+}
+
+# 企业微信配置
+WECHAT_WORK_CONFIG = {
+    "monthly_report_webhook": "8f1cce28-5078-47f0-b24c-192e67b44b22",  # 月度销售报告推送群
+    "api_base_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
+}
+
+# 月度销售报告配置
+MONTHLY_REPORT_CONFIG = {
+    "test_mode": True,  # 测试模式：True=查询当月数据, False=查询上月数据
+    "include_zero_calls": True,  # 是否包含有效通话数为0的记录
+    "show_total_calls": True,  # 是否显示总通话数
 }
 
 # 日志配置
