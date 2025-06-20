@@ -65,7 +65,7 @@ def tutorial():
 
     st.markdown("#### 2️⃣-1️⃣ 倘若今天已经上传过一次")
     st.markdown("可以选择“覆盖数据库中的信息”，也可以将当前的数据“追加到数据库中”")
-    st.image("tutorial/名字.png")
+    st.image("tutorial/已有记录.png")
     st.markdown("#### 3️⃣ 开始分析流程")
     st.markdown("点击 :blue[**\"开始分析\"**] 按钮启动处理：")
     st.image("tutorial/开始分析.png")
