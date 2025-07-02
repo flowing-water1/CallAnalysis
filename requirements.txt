@@ -101,9 +101,10 @@ zope.event==5.0
 zope.interface==7.2
 zstandard==0.23.0
 openpyxl
-tos
+
 # 数据库相关依赖
 asyncpg==0.29.0
 psycopg2-binary>=2.9.0
 
 # 视频处理相关
+audioop-lts>=0.2.1

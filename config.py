@@ -30,20 +30,32 @@ VOLCANO_CONFIG = {
 
 # PostgreSQL 数据库配置
 DATABASE_CONFIG = {
-    # 基础连接参数
-    "host": "117.72.54.192",
-    "port": 5432,  # PostgreSQL默认端口
-    "database": "callanalysis",
-    "username": "callanalysis",
-    "password": "callanalysis",  # 加密存储密码
+    # 生产环境配置
+    "production": {
+        "host": "117.72.54.192",
+        "port": 5432,
+        "database": "callanalysis",
+        "username": "callanalysis",
+        "password": "callanalysis",
+        "sync_url": "postgresql://callanalysis:callanalysis@117.72.54.192:5432/callanalysis",
+        "async_url": "postgresql+asyncpg://callanalysis:callanalysis@117.72.54.192:5432/callanalysis",
+    },
     
-    # 连接URL格式（同步）
-    "sync_url": f"postgresql://callanalysis:callanalysis@117.72.54.192:5432/callanalysis",
+    # 测试环境配置
+    "test": {
+        "host": "117.72.54.192",
+        "port": 5432,
+        "database": "testcall",
+        "username": "testcall",
+        "password": "testcall",
+        "sync_url": "postgresql://testcall:testcall@117.72.54.192:5432/testcall",
+        "async_url": "postgresql+asyncpg://testcall:testcall@117.72.54.192:5432/testcall",
+    },
     
-    # 连接URL格式（异步，推荐用于Streamlit应用）
-    "async_url": f"postgresql+asyncpg://callanalysis:callanalysis@117.72.54.192:5432/callanalysis",
+    # 当前使用的环境（可以切换为 'production' 或 'test'）
+    "current_env": "production",
     
-    # 连接池配置
+    # 连接池配置（通用）
     "pool_config": {
         "min_size": 1,      # 最小连接数
         "max_size": 10,     # 最大连接数
@@ -73,7 +85,7 @@ ROLE_IDENTIFY_CONFIG = {
     "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
     "api_base": "https://api.pumpkinaigc.online/v1",
     "model_name": "gemini-2.5-pro-preview-06-05",
-    "temperature": 0.2  # 角色识别需要更确定的结果
+    "temperature": 0.5  # 角色识别需要更确定的结果
 }
 
 CONVERSATION_ANALYSIS_CONFIG = {
@@ -93,6 +105,7 @@ SUMMARY_ANALYSIS_CONFIG = {
 # 企业微信配置
 WECHAT_WORK_CONFIG = {
     "monthly_report_webhook": "8f1cce28-5078-47f0-b24c-192e67b44b22",  # 月度销售报告推送群
+    "daily_report_webhook": "8f1cce28-5078-47f0-b24c-192e67b44b22",  # 每日销售报告推送群（暂时使用同一个群）
     "api_base_url": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send"
 }
 
@@ -101,6 +114,16 @@ MONTHLY_REPORT_CONFIG = {
     "test_mode": True,  # 测试模式：True=查询当月数据, False=查询上月数据
     "include_zero_calls": True,  # 是否包含有效通话数为0的记录
     "show_total_calls": True,  # 是否显示总通话数
+}
+
+# 每日销售报告配置
+DAILY_REPORT_CONFIG = {
+    "test_mode": True,  # 测试模式：True=可查询当天数据, False=只查询昨天数据
+    "test_date": None,  # 测试模式下指定查询日期（格式：'2024-01-15'），None则查询当天
+    "top_count": 10,  # 显示前N名销售人员的详细数据
+    "show_inactive": True,  # 是否显示无通话记录的销售人员统计
+    "show_inactive_names": False,  # 是否显示无通话记录的销售人员姓名
+    "include_weekends": False,  # 是否包含周末数据（可用于控制周末是否发送报告）
 }
 
 # 日志配置
@@ -121,4 +144,10 @@ EXCEL_CONFIG = {
         "通话优化建议": None
     }
 }
+
+# 便捷获取当前环境配置的函数
+def get_current_db_config():
+    """获取当前环境的数据库配置"""
+    env = DATABASE_CONFIG["current_env"]
+    return DATABASE_CONFIG[env]
 

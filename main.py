@@ -8,7 +8,7 @@ import re
 import openpyxl
 from datetime import date, datetime
 import pytz
-from config import LOGGING_CONFIG, EXCEL_CONFIG, DATABASE_CONFIG
+from config import LOGGING_CONFIG, EXCEL_CONFIG, DATABASE_CONFIG, get_current_db_config
 from database_utils import SyncDatabaseManager
 from Audio_Recognition import (
     process_file,
@@ -64,7 +64,7 @@ def tutorial():
     st.image("tutorial/上传之后的样子.png")
 
     st.markdown("#### 2️⃣-1️⃣ 倘若今天已经上传过一次")
-    st.markdown("可以选择“覆盖数据库中的信息”，也可以将当前的数据“追加到数据库中”")
+    st.markdown("可以选择「覆盖数据库中的信息」，也可以将当前的数据「追加到数据库中」")
     st.image("tutorial/已有记录.png")
     st.markdown("#### 3️⃣ 开始分析流程")
     st.markdown("点击 :blue[**\"开始分析\"**] 按钮启动处理：")
@@ -131,7 +131,7 @@ if 'upload_choice' not in st.session_state:
 @st.cache_resource
 def get_db_manager():
     """获取数据库管理器实例（缓存）"""
-    return SyncDatabaseManager(DATABASE_CONFIG)
+    return SyncDatabaseManager(get_current_db_config())
 
 # 仅在第一次加载页面且教程未显示过时显示教程
 if not st.session_state.tutorial_shown:
@@ -180,7 +180,7 @@ if st.session_state.salesperson_id:
     
     uploaded_files = st.file_uploader(
         "请上传通话录音文件",
-        type=['wav', 'mp3', 'm4a', 'ogg'],
+        type=['wav', 'mp3', 'm4a', 'ogg', 'aac'],
         accept_multiple_files=True
     )
 else:
@@ -284,7 +284,7 @@ if uploaded_files and not st.session_state.analysis_completed:
                                     analysis_text = res["analysis_result"]["analysis"]
                                     extracted_data = extract_all_conversation_data(analysis_text)
                                     
-                                    # 判断是否有效通话
+                                    # 正确获取评分（用于统计，不用于有效性判断）
                                     score = None
                                     if extracted_data["score"]:
                                         try:
@@ -292,7 +292,9 @@ if uploaded_files and not st.session_state.analysis_completed:
                                         except ValueError:
                                             pass
                                     
-                                    is_effective = score is not None and score >= 60
+                                    # 🚀 修复：使用正确的时间判断逻辑（>= 60秒）
+                                    # 从 Audio_Recognition.py 的结果中获取已经计算好的 is_valid_call
+                                    is_effective = res.get("is_valid_call", False)
                                     
                                     # 准备分析结果的JSON格式
                                     analysis_result_json = {
@@ -342,7 +344,25 @@ if uploaded_files and not st.session_state.analysis_completed:
                         for temp_file in temp_files:
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
-                        # 尝试删除临时文件夹
+                        # 清理转换生成的临时文件（保留有价值的转换文件信息）
+                        converted_files_to_cleanup = []
+                        for res in results:
+                            if res["status"] == "success" and "conversion_info" in res:
+                                conversion_info = res["conversion_info"]
+                                if conversion_info.get("conversion_success", False):
+                                    converted_file_path = conversion_info.get("converted_file_path")
+                                    if converted_file_path and os.path.exists(converted_file_path):
+                                        converted_files_to_cleanup.append(converted_file_path)
+                        
+                        # 延迟清理转换文件，给用户查看的时间
+                        if converted_files_to_cleanup:
+                            logging.info(f"发现 {len(converted_files_to_cleanup)} 个转换文件，将在session结束时清理")
+                            # 将转换文件列表保存到session state中，用于后续清理
+                            if 'converted_files_cleanup' not in st.session_state:
+                                st.session_state.converted_files_cleanup = []
+                            st.session_state.converted_files_cleanup.extend(converted_files_to_cleanup)
+                        
+                        # 尝试删除临时文件夹（只删除空文件夹）
                         try:
                             os.rmdir("temp")
                         except OSError:
@@ -357,6 +377,59 @@ if uploaded_files and not st.session_state.analysis_completed:
                 progress_placeholder = st.empty()
 
 if st.session_state.analysis_results:
+    # 显示整体转换状态
+    conversion_summary = {"total": 0, "converted": 0, "failed": 0, "no_conversion": 0}
+    converted_files_info = []
+    
+    for res in st.session_state.analysis_results:
+        if res["status"] == "success":
+            conversion_summary["total"] += 1
+            if "conversion_info" in res:
+                if res["conversion_info"].get("conversion_success", False):
+                    conversion_summary["converted"] += 1
+                    converted_files_info.append({
+                        "filename": os.path.basename(res["file_path"]),
+                        "original_size": res["conversion_info"]["original_size_bytes"],
+                        "converted_size": res["conversion_info"]["converted_size_bytes"],
+                        "duration": res["conversion_info"]["converted_duration_seconds"]
+                    })
+                else:
+                    conversion_summary["failed"] += 1
+            else:
+                conversion_summary["no_conversion"] += 1
+    
+    # 显示转换摘要
+    if conversion_summary["converted"] > 0 or conversion_summary["failed"] > 0:
+        st.markdown("### 🔄 文件转换状态")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("总文件数", conversion_summary["total"])
+        with col2:
+            st.metric("转换成功", conversion_summary["converted"], delta=f"+{conversion_summary['converted']}" if conversion_summary["converted"] > 0 else None)
+        with col3:
+            st.metric("转换失败", conversion_summary["failed"], delta=f"-{conversion_summary['failed']}" if conversion_summary["failed"] > 0 else None)
+        with col4:
+            st.metric("无需转换", conversion_summary["no_conversion"])
+        
+        # 显示转换成功的文件详情
+        if converted_files_info:
+            with st.expander(f"📋 转换成功的文件详情 ({len(converted_files_info)} 个)", expanded=False):
+                for i, file_info in enumerate(converted_files_info, 1):
+                    size_change = file_info["converted_size"] / file_info["original_size"] if file_info["original_size"] > 0 else 1
+                    change_text = f"{size_change:.2f}x" if size_change != 1 else "无变化"
+                    change_color = "🔻" if size_change < 1 else "🔺" if size_change > 1 else "➖"
+                    
+                    st.markdown(f"**{i}. {file_info['filename']}**")
+                    st.markdown(f"   - 原始大小: {file_info['original_size']:,} 字节")
+                    st.markdown(f"   - 转换后大小: {file_info['converted_size']:,} 字节 {change_color} {change_text}")
+                    st.markdown(f"   - 音频时长: {file_info['duration']:.2f} 秒")
+        
+        if conversion_summary["converted"] > 0:
+            st.info("💡 转换后的文件已保留供验证，将在程序结束时自动清理")
+        
+        st.markdown("---")
+    
     tab1, tab2, tab3 = st.tabs(["📝 所有对话记录", "📊 所有分析结果", "📈 汇总分析"])
 
     with tab1:
@@ -365,6 +438,36 @@ if st.session_state.analysis_results:
                 analysis_result = res["analysis_result"]
                 if analysis_result.get("status") == "success":
                     st.markdown(f"### 📝 对话记录 {idx}")
+                    
+                    # 显示转换文件信息（如果有）
+                    if "conversion_info" in res:
+                        conversion_info = res["conversion_info"]
+                        if conversion_info.get("conversion_success", False):
+                            with st.expander(f"🔄 文件转换信息 - {os.path.basename(res['file_path'])}", expanded=False):
+                                col1, col2 = st.columns(2)
+                                with col1:
+                                    st.markdown("**原始文件：**")
+                                    st.markdown(f"- 文件路径: `{conversion_info['original_file_path']}`")
+                                    st.markdown(f"- 文件大小: {conversion_info['original_size_bytes']:,} 字节")
+                                    
+                                with col2:
+                                    st.markdown("**转换后文件：**")
+                                    st.markdown(f"- 文件路径: `{conversion_info['converted_file_path']}`")
+                                    st.markdown(f"- 文件大小: {conversion_info['converted_size_bytes']:,} 字节")
+                                    st.markdown(f"- 音频时长: {conversion_info['converted_duration_seconds']:.2f} 秒")
+                                    st.markdown(f"- 音频格式: {conversion_info['converted_format']}")
+                                    st.markdown(f"- 采样率: {conversion_info['converted_sample_rate']:,} Hz")
+                                    st.markdown(f"- 声道数: {conversion_info['converted_channels']}")
+                                
+                                # 显示转换效果
+                                compression_ratio = conversion_info['original_size_bytes'] / conversion_info['converted_size_bytes'] if conversion_info['converted_size_bytes'] > 0 else 0
+                                if compression_ratio > 1:
+                                    st.success(f"✅ 转换成功！文件大小变化: {compression_ratio:.2f}x")
+                                else:
+                                    st.info(f"ℹ️ 转换成功！文件大小变化: {1/compression_ratio:.2f}x (增大)")
+                        else:
+                            st.error(f"❌ 文件转换失败: {conversion_info.get('conversion_error', '未知错误')}")
+                    
                     if analysis_result["roles"].get("confidence", "low") != "high":
                         st.warning("⚠️ 该对话的角色识别可信度不高，请核实。")
                     st.markdown(f"**角色说明：**")
