@@ -53,7 +53,7 @@ DATABASE_CONFIG = {
     },
     
     # 当前使用的环境（可以切换为 'production' 或 'test'）
-    "current_env": "test",  # 数据库更新完成，恢复测试环境
+    "current_env": "production",  # 数据库更新完成，恢复测试环境
     
     # 连接池配置（通用）
     "pool_config": {
