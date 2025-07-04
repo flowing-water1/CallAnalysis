@@ -465,18 +465,9 @@ class DatabaseManager:
                     )
                     logger.info(f"📊 累加图片统计: 记录ID {daily_record_id}, 新增图片通话 {image_calls}, 新增有效 {image_effective_calls}")
                 
-                # 手动更新总计字段（以防触发器不工作）
-                await conn.execute(
-                    """
-                    UPDATE daily_call_records 
-                    SET total_calls = COALESCE(audio_calls, 0) + COALESCE(image_calls, 0),
-                        effective_calls = COALESCE(audio_effective_calls, 0) + COALESCE(image_effective_calls, 0),
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = $1
-                    """,
-                    daily_record_id
-                )
-                logger.info(f"📊 手动更新总计字段完成")
+                # 🔧 修复：不再重新计算总计字段，避免覆盖 update_daily_record_stats 设置的正确值
+                # 总计字段（total_calls, effective_calls）已经在 update_daily_record_stats 中正确处理
+                logger.info(f"📊 图片分类统计字段更新完成（总计字段保持不变）")
             else:
                 # 🚨 回退逻辑：图片字段不存在，直接更新总字段
                 logger.warning(f"⚠️ 图片统计字段不存在，使用回退逻辑更新总计字段")
@@ -508,6 +499,85 @@ class DatabaseManager:
                     )
                 
                 logger.info(f"📊 回退模式：累加到总计: 记录ID {daily_record_id}, 新增通话 {image_calls}, 新增有效 {image_effective_calls}")
+    
+    async def update_audio_call_statistics(
+        self,
+        daily_record_id: int,
+        audio_calls: int,
+        audio_effective_calls: int,
+        reset_audio_data: bool = False
+    ):
+        """
+        更新日常记录中的音频通话统计数据
+        
+        Args:
+            daily_record_id: 日常记录ID
+            audio_calls: 新增音频通话数
+            audio_effective_calls: 新增音频有效通话数
+            reset_audio_data: 是否重置音频数据（覆盖模式）
+        """
+        async with self.acquire() as conn:
+            # 检查audio_calls字段是否存在
+            audio_fields_exist = await conn.fetchval("""
+                SELECT COUNT(*) FROM information_schema.columns 
+                WHERE table_name = 'daily_call_records' 
+                AND column_name = 'audio_calls'
+                AND table_schema = 'public'
+            """)
+            
+            if audio_fields_exist > 0:
+                # 原始逻辑：使用专门的音频字段
+                if reset_audio_data:
+                    # 覆盖模式：直接设置为新值
+                    await conn.execute(
+                        """
+                        UPDATE daily_call_records 
+                        SET audio_calls = $2,
+                            audio_effective_calls = $3,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = $1
+                        """,
+                        daily_record_id, audio_calls, audio_effective_calls
+                    )
+                    logger.info(f"🎵 重置音频统计: 记录ID {daily_record_id}, 音频通话 {audio_calls}, 有效 {audio_effective_calls}")
+                else:
+                    # 追加模式：累加现有值
+                    await conn.execute(
+                        """
+                        UPDATE daily_call_records 
+                        SET audio_calls = COALESCE(audio_calls, 0) + $2,
+                            audio_effective_calls = COALESCE(audio_effective_calls, 0) + $3,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id = $1
+                        """,
+                        daily_record_id, audio_calls, audio_effective_calls
+                    )
+                    logger.info(f"🎵 累加音频统计: 记录ID {daily_record_id}, 新增音频通话 {audio_calls}, 新增有效 {audio_effective_calls}")
+                
+                # 🔧 修复：不再重新计算总计字段，避免覆盖 update_daily_record_stats 设置的正确值
+                # 总计字段（total_calls, effective_calls）已经在 update_daily_record_stats 中正确处理
+                logger.info(f"🎵 音频分类统计字段更新完成（总计字段保持不变）")
+            else:
+                # 回退逻辑：音频字段不存在，直接更新总字段
+                logger.warning(f"⚠️ 音频统计字段不存在，使用回退逻辑更新总计字段")
+                
+                if reset_audio_data:
+                    # 覆盖模式：直接设置为新值（这在回退模式下不安全，改为追加）
+                    logger.warning(f"⚠️ 回退模式下不支持覆盖，改为追加模式")
+                
+                # 追加模式：直接累加到总字段
+                await conn.execute(
+                    """
+                    UPDATE daily_call_records 
+                    SET total_calls = COALESCE(total_calls, 0) + $2,
+                        effective_calls = COALESCE(effective_calls, 0) + $3,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $1
+                    """,
+                    daily_record_id, audio_calls, audio_effective_calls
+                )
+                
+                logger.info(f"🎵 回退模式：累加到总计: 记录ID {daily_record_id}, 新增通话 {audio_calls}, 新增有效 {audio_effective_calls}")
     
     async def insert_call_detail(
         self,
@@ -1065,6 +1135,24 @@ class SyncDatabaseManager:
                         merge_analysis=should_merge_analysis
                     )
                     
+                    # 🎯 更新音频通话专门的统计字段
+                    # 根据操作模式决定是否重置音频数据
+                    reset_audio_data = (current_upload_choice == "overwrite" or 
+                                      (not existing_record and current_upload_choice != "append"))
+                    
+                    # 计算音频通话的增量
+                    audio_calls_increment = len(call_details_list)
+                    audio_effective_increment = sum(1 for detail in call_details_list if detail.get('is_effective', False))
+                    
+                    # 更新音频通话统计（包含修复后的逻辑）
+                    await db.update_audio_call_statistics(
+                        daily_record_id,
+                        audio_calls_increment,
+                        audio_effective_increment,
+                        reset_audio_data=reset_audio_data
+                    )
+                    logger.info(f"✅ 已更新音频通话统计字段: {audio_calls_increment} 通话, {audio_effective_increment} 有效")
+                    
                     # 最终验证：检查保存后的状态
                     async with db.acquire() as conn:
                         total_records_final = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
@@ -1234,6 +1322,24 @@ class SyncDatabaseManager:
                         improvement_suggestions,
                         merge_analysis=should_merge_analysis
                     )
+                    
+                    # 🎯 更新图片通话专门的统计字段
+                    # 根据操作模式决定是否重置图片数据
+                    reset_image_data = (current_upload_choice == "overwrite" or 
+                                      (not existing_record and current_upload_choice != "append"))
+                    
+                    # 计算图片通话的增量
+                    image_calls_increment = len(call_details_list)
+                    image_effective_increment = sum(1 for detail in call_details_list if detail.get('is_effective', False))
+                    
+                    # 更新图片通话统计（包含修复后的逻辑）
+                    await db.update_image_call_statistics(
+                        daily_record_id,
+                        image_calls_increment,
+                        image_effective_increment,
+                        reset_image_data=reset_image_data
+                    )
+                    logger.info(f"✅ 已更新图片通话统计字段: {image_calls_increment} 通话, {image_effective_increment} 有效")
                     
                     # 处理错误信息记录
                     errors = processing_results.get("processing_errors", [])
