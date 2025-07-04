@@ -53,7 +53,7 @@ DATABASE_CONFIG = {
     },
     
     # 当前使用的环境（可以切换为 'production' 或 'test'）
-    "current_env": "production",
+    "current_env": "test",  # 数据库更新完成，恢复测试环境
     
     # 连接池配置（通用）
     "pool_config": {
@@ -100,6 +100,14 @@ SUMMARY_ANALYSIS_CONFIG = {
     "api_base": "https://api.pumpkinaigc.online/v1",
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.7  # 汇总分析也需要一定的创造性
+}
+
+# 图片识别配置
+IMAGE_RECOGNITION_CONFIG = {
+    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
+    "api_base": "https://api.pumpkinaigc.online/v1",
+    "model_name": "gemini-2.5-pro-preview-06-05",
+    "temperature": 0.1  # 图片识别需要精确性，降低随机性
 }
 
 # 企业微信配置

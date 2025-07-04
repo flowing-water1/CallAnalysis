@@ -128,9 +128,9 @@ if 'upload_choice' not in st.session_state:
     st.session_state.upload_choice = None
 
 # 初始化数据库管理器
-@st.cache_resource
 def get_db_manager():
-    """获取数据库管理器实例（缓存）"""
+    """获取数据库管理器实例（不使用缓存以避免连接问题）"""
+    # 移除缓存装饰器，每次都创建新实例，避免连接断开问题
     return SyncDatabaseManager(get_current_db_config())
 
 # 仅在第一次加载页面且教程未显示过时显示教程
@@ -173,27 +173,130 @@ except Exception as e:
     st.error(f"获取销售人员列表失败：{str(e)}")
     st.info("请检查数据库连接是否正常")
 
-# 只有选择了销售人员才能上传文件
+# 只有选择了销售人员才能选择处理模式
 if st.session_state.salesperson_id:
     st.markdown("---")
-    st.markdown("### 📁 上传通话文件")
+    st.markdown("### 📋 选择处理模式")
     
-    uploaded_files = st.file_uploader(
-        "请上传通话录音文件",
-        type=['wav', 'mp3', 'm4a', 'ogg', 'aac'],
-        accept_multiple_files=True
+    # 初始化处理模式状态
+    if 'processing_mode' not in st.session_state:
+        st.session_state.processing_mode = "📞 录音文件"
+    
+    # 模式选择
+    processing_mode = st.radio(
+        "请选择要处理的内容类型",
+        options=["📞 录音文件", "📸 聊天截图"],
+        horizontal=True,
+        help="录音文件：分析音频通话记录；聊天截图：识别微信聊天中的通话时长信息"
     )
+    
+    # 更新session state
+    st.session_state.processing_mode = processing_mode
+    
+    st.markdown("---")
+    
+    if processing_mode == "📞 录音文件":
+        # 现有的录音文件上传流程
+        st.markdown("### 📁 上传通话录音文件")
+        
+        uploaded_files = st.file_uploader(
+            "请上传通话录音文件",
+            type=['wav', 'mp3', 'm4a', 'ogg', 'aac'],
+            accept_multiple_files=True,
+            help="支持 WAV、MP3、M4A、OGG、AAC 格式的音频文件"
+        )
+        uploaded_images = None  # 确保图片变量为空
+        
+    else:
+        # 新的图片上传流程
+        st.markdown("### 📸 上传微信通话截图")
+        
+        uploaded_images = st.file_uploader(
+            "请上传微信聊天截图",
+            type=['jpg', 'jpeg', 'png', 'bmp'],
+            accept_multiple_files=True,
+            help="请上传包含通话时长信息的微信聊天截图"
+        )
+        uploaded_files = None  # 确保音频变量为空
+
+        # 图片预览
+        if uploaded_images:
+            from image_utils import create_image_preview_grid
+            create_image_preview_grid(uploaded_images, columns=3)
 else:
     st.warning("⚠️ 请先选择您的姓名后才能上传文件")
     uploaded_files = None
+    uploaded_images = None
 
 if uploaded_files and not st.session_state.analysis_completed:
     st.write("已上传的文件:")
     for file in uploaded_files:
         st.write(f"- {file.name}")
     
+    # 🔍 重复文件检测
+    try:
+        # 提取文件名列表
+        filenames = [file.name for file in uploaded_files]
+        
+        # 初始化数据库管理器
+        db_manager = get_db_manager()
+        
+        # 检测重复文件
+        duplicate_check = db_manager.check_duplicate_filenames(
+            st.session_state.salesperson_id, 
+            filenames,
+            days_back=30  # 检测最近30天
+        )
+        
+        # 显示检测结果
+        if duplicate_check["duplicates"] or duplicate_check["new_files"]:
+            st.markdown("---")
+            st.markdown("### 🔍 文件重复检测结果")
+            
+            # 显示新文件
+            if duplicate_check["new_files"]:
+                st.success(f"✅ **新文件 ({len(duplicate_check['new_files'])} 个)**：将正常处理")
+                with st.expander("📋 查看新文件列表", expanded=False):
+                    for new_file in duplicate_check["new_files"]:
+                        st.write(f"- {new_file}")
+            
+            # 显示重复文件
+            if duplicate_check["duplicates"]:
+                st.warning(f"⚠️ **重复文件 ({len(duplicate_check['duplicates'])} 个)**：已自动跳过")
+                with st.expander("📋 查看重复文件详情", expanded=True):
+                    for dup in duplicate_check["duplicates"]:
+                        days_text = "今天" if dup["days_ago"] == 0 else f"{dup['days_ago']} 天前"
+                        st.write(f"- **{dup['filename']}**")
+                        st.write(f"  └─ 完全相同的文件已于 {days_text} ({dup['last_upload_date']}) 上传过")
+                
+                # 如果所有文件都是重复的，提前结束
+                if not duplicate_check["new_files"]:
+                    st.info("💡 所有文件都是重复文件，无需处理。请选择其他文件后重新上传。")
+                    st.stop()  # 停止执行后续代码
+        
+        # 过滤掉重复文件，只处理新文件
+        if duplicate_check["new_files"]:
+            # 重新构建 uploaded_files 列表，只包含新文件
+            new_uploaded_files = [
+                file for file in uploaded_files 
+                if file.name in duplicate_check["new_files"]
+            ]
+            
+            # 如果有文件被过滤掉，显示过滤后的文件数量
+            if len(new_uploaded_files) < len(uploaded_files):
+                st.info(f"📝 已过滤重复文件，将处理 {len(new_uploaded_files)} 个新文件")
+            
+            # 使用过滤后的文件列表继续后续处理
+            uploaded_files = new_uploaded_files
+        else:
+            # 如果没有新文件，停止处理
+            st.stop()
+            
+    except Exception as e:
+        st.error(f"检测重复文件时出错：{str(e)}")
+        st.info("将跳过重复检测，继续处理所有文件")
+    
     # 检查是否已有今日记录
-    db_manager = get_db_manager()
     today = date.today()
     
     try:
@@ -375,6 +478,254 @@ if uploaded_files and not st.session_state.analysis_completed:
         if st.button("开始分析", key="start_analysis"):
             with st.spinner("正在处理文件..."):
                 progress_placeholder = st.empty()
+
+# 处理图片文件的逻辑（新增）
+if uploaded_images and not st.session_state.analysis_completed:
+    st.write("已上传的图片:")
+    for img in uploaded_images:
+        st.write(f"- {img.name}")
+    
+    # 检查是否已有今日记录
+    today = date.today()
+    
+    try:
+        db_manager = get_db_manager()
+        has_existing_record = db_manager.check_daily_record_exists(
+            st.session_state.salesperson_id, 
+            today
+        )
+        
+        if has_existing_record and st.session_state.upload_choice is None:
+            st.warning(f"⚠️ {st.session_state.salesperson_name} 今天已有上传记录")
+            
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                if st.button("覆盖现有数据", type="primary", key="img_overwrite"):
+                    st.session_state.upload_choice = "overwrite"
+                    st.rerun()
+            with col2:
+                if st.button("追加到现有数据", key="img_append"):
+                    st.session_state.upload_choice = "append"
+                    st.rerun()
+            with col3:
+                if st.button("取消本次上传", type="secondary", key="img_cancel"):
+                    st.session_state.upload_choice = "cancel"
+                    st.session_state.analysis_completed = True
+                    st.rerun()
+                    
+        # 如果选择了取消，不显示分析按钮
+        if st.session_state.upload_choice == "cancel":
+            st.info("已取消本次上传")
+        elif not has_existing_record or st.session_state.upload_choice in ["overwrite", "append"]:
+            
+            # 🔍 第一层去重检查：文件名重复检测
+            st.markdown("### 🔍 检查文件重复情况")
+            
+            # 执行去重检查（只在第一次执行）
+            if 'image_duplicate_result' not in st.session_state:
+                with st.spinner("正在检查文件名重复情况..."):
+                    try:
+                        from Image_Recognition import check_image_duplicates
+                        
+                        duplicate_result = check_image_duplicates(
+                            uploaded_images, 
+                            st.session_state.salesperson_id, 
+                            db_manager
+                        )
+                        
+                        st.session_state.image_duplicate_result = duplicate_result
+                        
+                    except Exception as e:
+                        st.error(f"去重检查时出现错误：{str(e)}")
+                        # 出错时默认所有文件都是新文件
+                        st.session_state.image_duplicate_result = {
+                            "has_duplicates": False,
+                            "duplicates": [],
+                            "new_files": [img.name for img in uploaded_images],
+                            "duplicate_files": [],
+                            "clean_files": uploaded_images,
+                            "total_images": len(uploaded_images),
+                            "duplicate_count": 0,
+                            "new_count": len(uploaded_images),
+                            "error": str(e)
+                        }
+            
+            # 显示去重分析结果和用户选择界面
+            duplicate_result = st.session_state.image_duplicate_result
+            
+            if 'image_user_choice' not in st.session_state:
+                from image_utils import display_duplicate_analysis
+                
+                user_choice = display_duplicate_analysis(duplicate_result)
+                
+                if user_choice:
+                    st.session_state.image_user_choice = user_choice
+                    st.rerun()
+            
+            else:
+                # 用户已做出选择，显示选择结果
+                user_choice = st.session_state.image_user_choice
+                
+                if user_choice == "cancel":
+                    st.error("❌ 已取消图片上传")
+                    st.session_state.analysis_completed = True
+                
+                elif user_choice in ["proceed", "skip_duplicates", "force_all"]:
+                    # 根据用户选择过滤图片
+                    from Image_Recognition import filter_duplicate_images
+                    
+                    if user_choice == "proceed":
+                        # 没有重复文件，直接处理所有图片
+                        filtered_images = uploaded_images
+                        st.success(f"✅ 准备处理 {len(filtered_images)} 张新图片")
+                    else:
+                        # 有重复文件，根据用户选择过滤
+                        filtered_images = filter_duplicate_images(
+                            uploaded_images, 
+                            duplicate_result, 
+                            user_choice
+                        )
+                        
+                        if user_choice == "skip_duplicates":
+                            st.info(f"📝 将处理 {len(filtered_images)} 张新图片，跳过 {duplicate_result.get('duplicate_count', 0)} 张重复图片")
+                        elif user_choice == "force_all":
+                            st.warning(f"⚠️ 将强制处理所有 {len(filtered_images)} 张图片（包括重复文件）")
+                    
+                    # 保存过滤后的图片列表
+                    st.session_state.filtered_images = filtered_images
+                    
+                    # 显示开始识别按钮
+                    if len(filtered_images) > 0:
+                        if st.button("开始识别", key="start_image_analysis", type="primary"):
+                            with st.spinner("正在识别图片中的通话信息..."):
+                                progress_placeholder = st.empty()
+                                
+                                try:
+                                    # 导入图片识别模块
+                                    from Image_Recognition import process_image_batch, prepare_database_update_data
+                                    from image_utils import display_processing_summary, handle_image_processing_errors
+                                    
+                                    # 异步处理图片
+                                    def update_progress(progress, message):
+                                        progress_placeholder.progress(progress)
+                                        progress_placeholder.markdown(f"**{message}**")
+                                    
+                                    # 处理图片批次（使用过滤后的图片列表）
+                                    def run_image_process():
+                                        loop = asyncio.new_event_loop()
+                                        asyncio.set_event_loop(loop)
+                                        try:
+                                            return loop.run_until_complete(
+                                                process_image_batch(filtered_images, update_progress)
+                                            )
+                                        finally:
+                                            loop.close()
+                                    
+                                    processing_results = run_image_process()
+                                    
+                                    # 🤖 第二层去重检查：智能内容去重
+                                    if processing_results.get('all_calls') and len(processing_results['all_calls']) > 0:
+                                        st.markdown("### 🤖 智能内容去重检查")
+                                        
+                                        with st.spinner("正在进行智能去重分析..."):
+                                            # 获取现有数据库记录进行比较
+                                            existing_calls = db_manager.get_recent_call_records(
+                                                st.session_state.salesperson_id, 
+                                                days_back=30
+                                            )
+                                            
+                                            # 智能去重检测
+                                            from Image_Recognition import smart_duplicate_detection
+                                            detection_result = smart_duplicate_detection(
+                                                processing_results['all_calls'], 
+                                                existing_calls
+                                            )
+                                            
+                                            # 显示去重结果
+                                            from image_utils import display_smart_duplicate_result
+                                            should_continue = display_smart_duplicate_result(detection_result)
+                                            
+                                            if should_continue:
+                                                # 更新处理结果，只保留非重复的记录
+                                                processing_results['all_calls'] = detection_result['processed_calls']
+                                                
+                                                # 重新计算统计数据
+                                                total_calls = len(processing_results['all_calls'])
+                                                effective_calls = sum(1 for call in processing_results['all_calls'] 
+                                                                    if call.get('is_effective', False))
+                                                
+                                                processing_results['total_calls_found'] = total_calls
+                                                processing_results['effective_calls_found'] = effective_calls
+                                            else:
+                                                # 没有新记录需要处理
+                                                processing_results['all_calls'] = []
+                                                processing_results['total_calls_found'] = 0
+                                                processing_results['effective_calls_found'] = 0
+                                            
+                                            st.markdown("---")
+                                    
+                                    # 显示处理结果摘要
+                                    display_processing_summary({
+                                        'total': processing_results['total_images'],
+                                        'success': processing_results['successful_images'], 
+                                        'failed': processing_results['failed_images'],
+                                        'calls_found': processing_results['total_calls_found'],
+                                        'effective_calls': processing_results['effective_calls_found'],
+                                        'total_calls': processing_results['total_calls_found']
+                                    })
+                                    
+                                    # 处理错误
+                                    if processing_results['failed_results']:
+                                        handle_image_processing_errors(processing_results['failed_results'])
+                                    
+                                    # 如果有成功处理的结果，保存到数据库
+                                    if processing_results['successful_images'] > 0:
+                                        progress_placeholder.markdown("**💾 正在保存识别结果到数据库...**")
+                                        
+                                        # 准备数据库更新数据
+                                        db_update_data = prepare_database_update_data(
+                                            processing_results, 
+                                            st.session_state.salesperson_id
+                                        )
+                                        
+                                        # 保存到数据库
+                                        save_success = db_manager.save_image_analysis_data(
+                                            st.session_state.salesperson_id,
+                                            db_update_data,
+                                            st.session_state.upload_choice
+                                        )
+                                        
+                                        if save_success:
+                                            progress_placeholder.markdown("**✅ 图片识别结果已成功保存到数据库！**")
+                                            
+                                            # 保存处理结果到session state用于显示
+                                            st.session_state.image_analysis_results = processing_results
+                                            st.session_state.analysis_completed = True
+                                            
+                                            # 显示成功信息
+                                            st.success(f"""
+                                            ✅ **图片识别完成！**
+                                            
+                                            📊 **识别结果统计：**
+                                            - 处理图片：{processing_results['successful_images']} 张
+                                            - 发现通话：{processing_results['total_calls_found']} 个
+                                            - 有效通话：{processing_results['effective_calls_found']} 个
+                                            """)
+                                        else:
+                                            st.error("识别结果保存到数据库时出现问题")
+                                    else:
+                                        st.warning("没有成功识别出任何通话信息，请检查图片质量或内容")
+                                    
+                                except Exception as e:
+                                    st.error(f"图片识别过程中出现错误：{str(e)}")
+                                    import traceback
+                                    with st.expander("详细错误信息"):
+                                        st.code(traceback.format_exc())
+                    else:
+                        st.warning("⚠️ 没有图片可以处理，请重新选择")
+
+    except Exception as e:
+        st.error(f"检查数据库记录时出错：{str(e)}")
 
 if st.session_state.analysis_results:
     # 显示整体转换状态
@@ -656,3 +1007,61 @@ if st.session_state.analysis_results:
                 file_name=excel_filename,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
+
+# 显示图片识别结果（新增）
+elif hasattr(st.session_state, 'image_analysis_results') and st.session_state.image_analysis_results:
+    st.markdown("### 📸 图片识别结果")
+    
+    results = st.session_state.image_analysis_results
+    
+    # 显示统计摘要
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("处理图片", results['total_images'])
+    with col2:
+        st.metric("识别成功", results['successful_images'])
+    with col3:
+        st.metric("发现通话", results['total_calls_found'])
+    with col4:
+        st.metric("有效通话", results['effective_calls_found'])
+    
+    st.markdown("---")
+    
+    # 显示详细的通话记录
+    if results['all_calls']:
+        st.markdown("### 📞 识别到的通话记录")
+        
+        for idx, call in enumerate(results['all_calls'], 1):
+            with st.expander(f"📞 通话记录 {idx} - {call.get('contact_info', '未知联系人')}"):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.markdown("**基本信息：**")
+                    st.markdown(f"- 联系人：{call.get('contact_info', '未知')}")
+                    st.markdown(f"- 公司：{call.get('company_name', '未知')}")
+                    st.markdown(f"- 通话时间：{call.get('call_time', '未知')}")
+                
+                with col2:
+                    st.markdown("**通话统计：**")
+                    duration_text = call.get('duration_text', '未知')
+                    duration_seconds = call.get('duration_seconds', 0)
+                    is_effective = call.get('is_effective', False)
+                    
+                    st.markdown(f"- 通话时长：{duration_text} ({duration_seconds}秒)")
+                    
+                    if is_effective:
+                        st.success("✅ 有效通话")
+                    else:
+                        st.warning("⚠️ 无效通话")
+                
+                # 显示附加信息
+                if call.get('additional_info'):
+                    st.markdown("**附加信息：**")
+                    st.markdown(call['additional_info'])
+    
+    # 显示处理错误（如果有）
+    if results['failed_results']:
+        st.markdown("### ⚠️ 处理失败的图片")
+        for error in results['failed_results']:
+            st.error(f"**{error['filename']}**: {error['error']}")
