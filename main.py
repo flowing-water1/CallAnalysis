@@ -143,8 +143,8 @@ st.markdown("### 🙋🏻‍♂️ 请选择您的姓名")
 
 # 获取销售人员列表
 try:
-    db_manager = get_db_manager()
-    salespersons = db_manager.get_salespersons()
+    # 每次调用都创建新的数据库管理器实例，避免协程重用
+    salespersons = get_db_manager().get_salespersons()
     salesperson_names = ["请选择..."] + [sp['name'] for sp in salespersons]
     
     # 销售人员下拉选择框
@@ -238,11 +238,8 @@ if uploaded_files and not st.session_state.analysis_completed:
         # 提取文件名列表
         filenames = [file.name for file in uploaded_files]
         
-        # 初始化数据库管理器
-        db_manager = get_db_manager()
-        
-        # 检测重复文件
-        duplicate_check = db_manager.check_duplicate_filenames(
+        # 每次调用都创建新的数据库管理器实例，避免协程重用
+        duplicate_check = get_db_manager().check_duplicate_filenames(
             st.session_state.salesperson_id, 
             filenames,
             days_back=30  # 检测最近30天
@@ -300,7 +297,8 @@ if uploaded_files and not st.session_state.analysis_completed:
     today = date.today()
     
     try:
-        has_existing_record = db_manager.check_daily_record_exists(
+        # 每次调用都创建新的数据库管理器实例，避免协程重用
+        has_existing_record = get_db_manager().check_daily_record_exists(
             st.session_state.salesperson_id, 
             today
         )
@@ -422,8 +420,8 @@ if uploaded_files and not st.session_state.analysis_completed:
                                     
                                     call_details_list.append(call_detail)
                             
-                            # 保存到数据库
-                            save_success = db_manager.save_analysis_data(
+                            # 保存到数据库 - 每次调用都创建新的数据库管理器实例
+                            save_success = get_db_manager().save_analysis_data(
                                 st.session_state.salesperson_id,
                                 call_details_list,
                                 st.session_state.summary_analysis,
@@ -489,8 +487,8 @@ if uploaded_images and not st.session_state.analysis_completed:
     today = date.today()
     
     try:
-        db_manager = get_db_manager()
-        has_existing_record = db_manager.check_daily_record_exists(
+        # 每次调用都创建新的数据库管理器实例，避免协程重用
+        has_existing_record = get_db_manager().check_daily_record_exists(
             st.session_state.salesperson_id, 
             today
         )
@@ -527,10 +525,11 @@ if uploaded_images and not st.session_state.analysis_completed:
                     try:
                         from Image_Recognition import check_image_duplicates
                         
+                        # 每次调用都创建新的数据库管理器实例，避免协程重用
                         duplicate_result = check_image_duplicates(
                             uploaded_images, 
                             st.session_state.salesperson_id, 
-                            db_manager
+                            get_db_manager()  # 传递新实例
                         )
                         
                         st.session_state.image_duplicate_result = duplicate_result
@@ -628,8 +627,8 @@ if uploaded_images and not st.session_state.analysis_completed:
                                         st.markdown("### 🤖 智能内容去重检查")
                                         
                                         with st.spinner("正在进行智能去重分析..."):
-                                            # 获取现有数据库记录进行比较
-                                            existing_calls = db_manager.get_recent_call_records(
+                                            # 获取现有数据库记录进行比较 - 每次调用都创建新的数据库管理器实例
+                                            existing_calls = get_db_manager().get_recent_call_records(
                                                 st.session_state.salesperson_id, 
                                                 days_back=30
                                             )
@@ -688,8 +687,8 @@ if uploaded_images and not st.session_state.analysis_completed:
                                             st.session_state.salesperson_id
                                         )
                                         
-                                        # 保存到数据库
-                                        save_success = db_manager.save_image_analysis_data(
+                                        # 保存到数据库 - 每次调用都创建新的数据库管理器实例
+                                        save_success = get_db_manager().save_image_analysis_data(
                                             st.session_state.salesperson_id,
                                             db_update_data,
                                             st.session_state.upload_choice
