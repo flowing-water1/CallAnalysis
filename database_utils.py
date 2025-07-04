@@ -801,7 +801,7 @@ class SyncDatabaseManager:
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         
-    def _run_async(self, coro):
+    def _run_async(self, coro_factory):
         """在新的事件循环中运行异步代码（带重试机制）"""
         import asyncio
         import time
@@ -815,6 +815,8 @@ class SyncDatabaseManager:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
+                    # 每次重试都创建新的协程对象
+                    coro = coro_factory()
                     return loop.run_until_complete(coro)
                 finally:
                     loop.close()
@@ -840,7 +842,7 @@ class SyncDatabaseManager:
                     await db.close()
             return _async_get()
         
-        return self._run_async(_get())
+        return self._run_async(_get)
     
     def check_daily_record_exists(self, salesperson_id: int, upload_date: date) -> bool:
         """同步检查记录是否存在"""
@@ -854,7 +856,7 @@ class SyncDatabaseManager:
                     await db.close()
             return _async_check()
         
-        return self._run_async(_check())
+        return self._run_async(_check)
     
     def check_duplicate_filenames(
         self, 
@@ -873,7 +875,7 @@ class SyncDatabaseManager:
                     await db.close()
             return _async_check()
         
-        return self._run_async(_check())
+        return self._run_async(_check)
     
     def get_recent_call_records(
         self, 
@@ -892,7 +894,7 @@ class SyncDatabaseManager:
                     await db.close()
             return _async_get()
         
-        return self._run_async(_get())
+        return self._run_async(_get)
     
     def save_analysis_data(
         self,
@@ -1083,7 +1085,7 @@ class SyncDatabaseManager:
                     await db.close()
             return _async_save()
         
-        return self._run_async(_save())
+        return self._run_async(_save)
     
     def save_image_analysis_data(
         self,
@@ -1252,7 +1254,7 @@ class SyncDatabaseManager:
                     await db.close()
             return _async_save()
         
-        return self._run_async(_save())
+        return self._run_async(_save)
 
 def generate_image_summary_analysis(call_details_list: List[Dict[str, Any]], processing_results: Dict[str, Any]) -> str:
     """
