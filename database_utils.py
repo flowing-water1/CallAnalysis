@@ -830,25 +830,29 @@ class SyncDatabaseManager:
     
     def get_salespersons(self) -> List[Dict[str, Any]]:
         """同步获取销售人员列表"""
-        async def _get():
-            db = DatabaseManager(self.config)
-            await db.initialize()
-            try:
-                return await db.get_salespersons()
-            finally:
-                await db.close()
+        def _get():
+            async def _async_get():
+                db = DatabaseManager(self.config)
+                await db.initialize()
+                try:
+                    return await db.get_salespersons()
+                finally:
+                    await db.close()
+            return _async_get()
         
         return self._run_async(_get())
     
     def check_daily_record_exists(self, salesperson_id: int, upload_date: date) -> bool:
         """同步检查记录是否存在"""
-        async def _check():
-            db = DatabaseManager(self.config)
-            await db.initialize()
-            try:
-                return await db.check_daily_record_exists(salesperson_id, upload_date)
-            finally:
-                await db.close()
+        def _check():
+            async def _async_check():
+                db = DatabaseManager(self.config)
+                await db.initialize()
+                try:
+                    return await db.check_daily_record_exists(salesperson_id, upload_date)
+                finally:
+                    await db.close()
+            return _async_check()
         
         return self._run_async(_check())
     
@@ -859,13 +863,15 @@ class SyncDatabaseManager:
         days_back: int = 30
     ) -> Dict[str, Any]:
         """同步检测重复文件名"""
-        async def _check():
-            db = DatabaseManager(self.config)
-            await db.initialize()
-            try:
-                return await db.check_duplicate_filenames(salesperson_id, filenames, days_back)
-            finally:
-                await db.close()
+        def _check():
+            async def _async_check():
+                db = DatabaseManager(self.config)
+                await db.initialize()
+                try:
+                    return await db.check_duplicate_filenames(salesperson_id, filenames, days_back)
+                finally:
+                    await db.close()
+            return _async_check()
         
         return self._run_async(_check())
     
@@ -876,13 +882,15 @@ class SyncDatabaseManager:
         record_type: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """同步获取最近的通话记录"""
-        async def _get():
-            db = DatabaseManager(self.config)
-            await db.initialize()
-            try:
-                return await db.get_recent_call_records(salesperson_id, days_back, record_type)
-            finally:
-                await db.close()
+        def _get():
+            async def _async_get():
+                db = DatabaseManager(self.config)
+                await db.initialize()
+                try:
+                    return await db.get_recent_call_records(salesperson_id, days_back, record_type)
+                finally:
+                    await db.close()
+            return _async_get()
         
         return self._run_async(_get())
     
@@ -894,184 +902,186 @@ class SyncDatabaseManager:
         upload_choice: Optional[str] = None
     ) -> bool:
         """同步保存分析数据"""
-        async def _save():
-            db = DatabaseManager(self.config)
-            await db.initialize()
-            try:
-                today = date.today()
-                
-                # 安全检查：记录当前操作信息
-                logger.info(f"🔄 开始保存分析数据:")
-                logger.info(f"   销售人员ID: {salesperson_id}")
-                logger.info(f"   上传日期: {today}")
-                logger.info(f"   通话数量: {len(call_details_list)}")
-                logger.info(f"   操作模式: {upload_choice}")
-                
-                # 使用局部变量来避免重新赋值问题
-                current_upload_choice = upload_choice
-                
-                # 查询当前数据库中的记录数量（用于对比）
-                async with db.acquire() as conn:
-                    total_records_before = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
-                    total_details_before = await conn.fetchval("SELECT COUNT(*) FROM call_details")
-                    logger.info(f"📊 操作前数据库状态:")
-                    logger.info(f"   每日记录总数: {total_records_before}")
-                    logger.info(f"   通话详情总数: {total_details_before}")
-                
-                # 处理现有记录
-                existing_record = await db.get_daily_record(salesperson_id, today)
-                if current_upload_choice == "overwrite" and existing_record:
-                    # 安全检查：确认只删除指定销售人员当天的记录
-                    logger.warning(f"⚠️  准备删除销售人员 {salesperson_id} 在 {today} 的现有记录")
-                    logger.warning(f"   即将删除的记录ID: {existing_record['id']}")
+        def _save():
+            async def _async_save():
+                db = DatabaseManager(self.config)
+                await db.initialize()
+                try:
+                    today = date.today()
                     
-                    # 查询将要删除的详情数量
+                    # 安全检查：记录当前操作信息
+                    logger.info(f"🔄 开始保存分析数据:")
+                    logger.info(f"   销售人员ID: {salesperson_id}")
+                    logger.info(f"   上传日期: {today}")
+                    logger.info(f"   通话数量: {len(call_details_list)}")
+                    logger.info(f"   操作模式: {upload_choice}")
+                    
+                    # 使用局部变量来避免重新赋值问题
+                    current_upload_choice = upload_choice
+                    
+                    # 查询当前数据库中的记录数量（用于对比）
                     async with db.acquire() as conn:
-                        details_to_delete = await conn.fetchval(
-                            "SELECT COUNT(*) FROM call_details WHERE daily_record_id = $1",
-                            existing_record['id']
+                        total_records_before = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
+                        total_details_before = await conn.fetchval("SELECT COUNT(*) FROM call_details")
+                        logger.info(f"📊 操作前数据库状态:")
+                        logger.info(f"   每日记录总数: {total_records_before}")
+                        logger.info(f"   通话详情总数: {total_details_before}")
+                    
+                    # 处理现有记录
+                    existing_record = await db.get_daily_record(salesperson_id, today)
+                    if current_upload_choice == "overwrite" and existing_record:
+                        # 安全检查：确认只删除指定销售人员当天的记录
+                        logger.warning(f"⚠️  准备删除销售人员 {salesperson_id} 在 {today} 的现有记录")
+                        logger.warning(f"   即将删除的记录ID: {existing_record['id']}")
+                        
+                        # 查询将要删除的详情数量
+                        async with db.acquire() as conn:
+                            details_to_delete = await conn.fetchval(
+                                "SELECT COUNT(*) FROM call_details WHERE daily_record_id = $1",
+                                existing_record['id']
+                            )
+                        logger.warning(f"   将删除 {details_to_delete} 条通话详情")
+                        
+                        # 执行删除操作
+                        await db.delete_daily_record_and_details(existing_record['id'])
+                        
+                        # 验证删除后的状态
+                        async with db.acquire() as conn:
+                            total_records_after_delete = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
+                            total_details_after_delete = await conn.fetchval("SELECT COUNT(*) FROM call_details")
+                            logger.info(f"✅ 删除后数据库状态:")
+                            logger.info(f"   每日记录总数: {total_records_after_delete} (减少: {total_records_before - total_records_after_delete})")
+                            logger.info(f"   通话详情总数: {total_details_after_delete} (减少: {total_details_before - total_details_after_delete})")
+                        
+                        # 安全检查：确认删除的数量合理
+                        if (total_records_before - total_records_after_delete) > 1:
+                            logger.error(f"❌ 异常：删除了超过1条每日记录！")
+                            raise Exception("删除操作异常：删除的记录数量超出预期")
+                        
+                        existing_record = None  # 重置现有记录状态
+                    
+                    # 获取或创建日常记录
+                    if existing_record and current_upload_choice == "append":
+                        daily_record_id = existing_record['id']
+                        logger.info(f"📝 使用现有记录 (追加模式): ID {daily_record_id}")
+                    elif existing_record and current_upload_choice is None:
+                        # 如果存在记录但没有指定操作模式，默认使用追加模式
+                        daily_record_id = existing_record['id']
+                        logger.info(f"📝 使用现有记录 (默认追加模式): ID {daily_record_id}")
+                        current_upload_choice = "append"  # 设置为追加模式以便后续逻辑处理
+                    else:
+                        # 创建新记录（没有现有记录或覆盖模式删除后）
+                        daily_record_id = await db.create_daily_record(salesperson_id, today)
+                        logger.info(f"📝 创建新记录: ID {daily_record_id}")
+                        # 如果是新创建的记录，重新获取完整信息以便后续使用
+                        if current_upload_choice == "append":
+                            # 追加模式但没有现有记录的情况不应该发生，记录警告
+                            logger.warning("⚠️  追加模式但没有找到现有记录，创建了新记录")
+                            existing_record = None
+                    
+                    # 准备批量插入的数据
+                    total_calls = len(call_details_list)
+                    effective_calls = sum(1 for detail in call_details_list if detail.get('is_effective', False))
+                    scores = [detail['score'] for detail in call_details_list if detail.get('score') is not None]
+                    
+                    logger.info(f"📈 统计信息:")
+                    logger.info(f"   总通话数: {total_calls}")
+                    logger.info(f"   有效通话数: {effective_calls}")
+                    logger.info(f"   有评分通话数: {len(scores)}")
+                    
+                    # 转换数据格式（JSON序列化）
+                    for detail in call_details_list:
+                        # 移除错误的score字段序列化，score是数值字段
+                        pass
+                    
+                    # 批量插入通话详情
+                    if call_details_list:
+                        await db.batch_insert_call_details(
+                            daily_record_id,
+                            salesperson_id,
+                            call_details_list
                         )
-                    logger.warning(f"   将删除 {details_to_delete} 条通话详情")
+                        logger.info(f"✅ 成功插入 {len(call_details_list)} 条通话详情")
                     
-                    # 执行删除操作
-                    await db.delete_daily_record_and_details(existing_record['id'])
+                    # 计算平均分
+                    average_score = sum(scores) / len(scores) if scores else None
+                    logger.info(f"📊 平均评分: {average_score:.2f}" if average_score else "📊 平均评分: 无")
                     
-                    # 验证删除后的状态
-                    async with db.acquire() as conn:
-                        total_records_after_delete = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
-                        total_details_after_delete = await conn.fetchval("SELECT COUNT(*) FROM call_details")
-                        logger.info(f"✅ 删除后数据库状态:")
-                        logger.info(f"   每日记录总数: {total_records_after_delete} (减少: {total_records_before - total_records_after_delete})")
-                        logger.info(f"   通话详情总数: {total_details_after_delete} (减少: {total_details_before - total_details_after_delete})")
+                    # 从汇总分析中提取改进建议
+                    from extract_utils import extract_all_summary_data
+                    summary_data = extract_all_summary_data(summary_analysis)
+                    improvement_suggestions = "\n".join(summary_data["improvement_measures"]) if summary_data["improvement_measures"] else None
                     
-                    # 安全检查：确认删除的数量合理
-                    if (total_records_before - total_records_after_delete) > 1:
-                        logger.error(f"❌ 异常：删除了超过1条每日记录！")
-                        raise Exception("删除操作异常：删除的记录数量超出预期")
+                    # 如果是追加模式，需要合并统计数据
+                    if existing_record and current_upload_choice == "append":
+                        logger.info(f"🔄 追加模式：合并统计数据")
+                        logger.info(f"   existing_record ID: {existing_record.get('id')}")
+                        logger.info(f"   daily_record_id: {daily_record_id}")
+                        
+                        old_total = existing_record.get('total_calls', 0)
+                        old_effective = existing_record.get('effective_calls', 0)
+                        old_avg = existing_record.get('average_score')
+                        
+                        logger.info(f"   原有数据: {old_total} 通话, {old_effective} 有效, 平均分 {old_avg}")
+                        logger.info(f"   新增数据: {len(call_details_list)} 通话, {effective_calls} 有效")
+                        
+                        # 合并统计数据
+                        total_calls += old_total
+                        effective_calls += old_effective
+                        
+                        logger.info(f"   合并后: {total_calls} 通话, {effective_calls} 有效")
+                        
+                        # 重新计算平均分
+                        if old_avg and average_score:
+                            old_avg_float = float(old_avg)
+                            old_count = old_total
+                            new_count = len(call_details_list)
+                            if old_count + new_count > 0:
+                                # 计算加权平均分
+                                weighted_avg = (old_avg_float * old_count + average_score * new_count) / (old_count + new_count)
+                                logger.info(f"   原平均分: {old_avg_float:.2f} (基于 {old_count} 个通话)")
+                                logger.info(f"   新平均分: {average_score:.2f} (基于 {new_count} 个通话)")
+                                logger.info(f"   合并后平均分: {weighted_avg:.2f}")
+                                average_score = weighted_avg
+                    else:
+                        logger.info(f"📝 非追加模式或无现有记录:")
+                        logger.info(f"   upload_choice: {current_upload_choice}")
+                        logger.info(f"   existing_record: {'存在' if existing_record else '不存在'}")
                     
-                    existing_record = None  # 重置现有记录状态
-                
-                # 获取或创建日常记录
-                if existing_record and current_upload_choice == "append":
-                    daily_record_id = existing_record['id']
-                    logger.info(f"📝 使用现有记录 (追加模式): ID {daily_record_id}")
-                elif existing_record and current_upload_choice is None:
-                    # 如果存在记录但没有指定操作模式，默认使用追加模式
-                    daily_record_id = existing_record['id']
-                    logger.info(f"📝 使用现有记录 (默认追加模式): ID {daily_record_id}")
-                    current_upload_choice = "append"  # 设置为追加模式以便后续逻辑处理
-                else:
-                    # 创建新记录（没有现有记录或覆盖模式删除后）
-                    daily_record_id = await db.create_daily_record(salesperson_id, today)
-                    logger.info(f"📝 创建新记录: ID {daily_record_id}")
-                    # 如果是新创建的记录，重新获取完整信息以便后续使用
-                    if current_upload_choice == "append":
-                        # 追加模式但没有现有记录的情况不应该发生，记录警告
-                        logger.warning("⚠️  追加模式但没有找到现有记录，创建了新记录")
-                        existing_record = None
-                
-                # 准备批量插入的数据
-                total_calls = len(call_details_list)
-                effective_calls = sum(1 for detail in call_details_list if detail.get('is_effective', False))
-                scores = [detail['score'] for detail in call_details_list if detail.get('score') is not None]
-                
-                logger.info(f"📈 统计信息:")
-                logger.info(f"   总通话数: {total_calls}")
-                logger.info(f"   有效通话数: {effective_calls}")
-                logger.info(f"   有评分通话数: {len(scores)}")
-                
-                # 转换数据格式（JSON序列化）
-                for detail in call_details_list:
-                    # 移除错误的score字段序列化，score是数值字段
-                    pass
-                
-                # 批量插入通话详情
-                if call_details_list:
-                    await db.batch_insert_call_details(
+                    # 确定是否需要合并分析结果
+                    should_merge_analysis = (current_upload_choice == "append" and existing_record is not None)
+                    logger.info(f"📊 分析结果合并设置: {should_merge_analysis}")
+                    
+                    # 更新日常记录统计信息
+                    await db.update_daily_record_stats(
                         daily_record_id,
-                        salesperson_id,
-                        call_details_list
+                        total_calls,
+                        effective_calls,
+                        average_score,
+                        summary_analysis,
+                        improvement_suggestions,
+                        merge_analysis=should_merge_analysis
                     )
-                    logger.info(f"✅ 成功插入 {len(call_details_list)} 条通话详情")
-                
-                # 计算平均分
-                average_score = sum(scores) / len(scores) if scores else None
-                logger.info(f"📊 平均评分: {average_score:.2f}" if average_score else "📊 平均评分: 无")
-                
-                # 从汇总分析中提取改进建议
-                from extract_utils import extract_all_summary_data
-                summary_data = extract_all_summary_data(summary_analysis)
-                improvement_suggestions = "\n".join(summary_data["improvement_measures"]) if summary_data["improvement_measures"] else None
-                
-                # 如果是追加模式，需要合并统计数据
-                if existing_record and current_upload_choice == "append":
-                    logger.info(f"🔄 追加模式：合并统计数据")
-                    logger.info(f"   existing_record ID: {existing_record.get('id')}")
-                    logger.info(f"   daily_record_id: {daily_record_id}")
                     
-                    old_total = existing_record.get('total_calls', 0)
-                    old_effective = existing_record.get('effective_calls', 0)
-                    old_avg = existing_record.get('average_score')
+                    # 最终验证：检查保存后的状态
+                    async with db.acquire() as conn:
+                        total_records_final = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
+                        total_details_final = await conn.fetchval("SELECT COUNT(*) FROM call_details")
+                        logger.info(f"🎉 最终数据库状态:")
+                        logger.info(f"   每日记录总数: {total_records_final}")
+                        logger.info(f"   通话详情总数: {total_details_final}")
                     
-                    logger.info(f"   原有数据: {old_total} 通话, {old_effective} 有效, 平均分 {old_avg}")
-                    logger.info(f"   新增数据: {len(call_details_list)} 通话, {effective_calls} 有效")
+                    logger.info(f"✅ 成功保存分析结果到数据库：{total_calls} 个通话，{effective_calls} 个有效通话")
+                    return True
                     
-                    # 合并统计数据
-                    total_calls += old_total
-                    effective_calls += old_effective
-                    
-                    logger.info(f"   合并后: {total_calls} 通话, {effective_calls} 有效")
-                    
-                    # 重新计算平均分
-                    if old_avg and average_score:
-                        old_avg_float = float(old_avg)
-                        old_count = old_total
-                        new_count = len(call_details_list)
-                        if old_count + new_count > 0:
-                            # 计算加权平均分
-                            weighted_avg = (old_avg_float * old_count + average_score * new_count) / (old_count + new_count)
-                            logger.info(f"   原平均分: {old_avg_float:.2f} (基于 {old_count} 个通话)")
-                            logger.info(f"   新平均分: {average_score:.2f} (基于 {new_count} 个通话)")
-                            logger.info(f"   合并后平均分: {weighted_avg:.2f}")
-                            average_score = weighted_avg
-                else:
-                    logger.info(f"📝 非追加模式或无现有记录:")
-                    logger.info(f"   upload_choice: {current_upload_choice}")
-                    logger.info(f"   existing_record: {'存在' if existing_record else '不存在'}")
-                
-                # 确定是否需要合并分析结果
-                should_merge_analysis = (current_upload_choice == "append" and existing_record is not None)
-                logger.info(f"📊 分析结果合并设置: {should_merge_analysis}")
-                
-                # 更新日常记录统计信息
-                await db.update_daily_record_stats(
-                    daily_record_id,
-                    total_calls,
-                    effective_calls,
-                    average_score,
-                    summary_analysis,
-                    improvement_suggestions,
-                    merge_analysis=should_merge_analysis
-                )
-                
-                # 最终验证：检查保存后的状态
-                async with db.acquire() as conn:
-                    total_records_final = await conn.fetchval("SELECT COUNT(*) FROM daily_call_records")
-                    total_details_final = await conn.fetchval("SELECT COUNT(*) FROM call_details")
-                    logger.info(f"🎉 最终数据库状态:")
-                    logger.info(f"   每日记录总数: {total_records_final}")
-                    logger.info(f"   通话详情总数: {total_details_final}")
-                
-                logger.info(f"✅ 成功保存分析结果到数据库：{total_calls} 个通话，{effective_calls} 个有效通话")
-                return True
-                
-            except Exception as e:
-                logger.error(f"❌ 保存数据时出错: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return False
-            finally:
-                await db.close()
+                except Exception as e:
+                    logger.error(f"❌ 保存数据时出错: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
+                finally:
+                    await db.close()
+            return _async_save()
         
         return self._run_async(_save())
     
@@ -1097,148 +1107,150 @@ class SyncDatabaseManager:
         Returns:
             bool: 保存是否成功
         """
-        async def _save():
-            db = DatabaseManager(self.config)
-            await db.initialize()
-            try:
-                today = date.today()
-                
-                logger.info(f"🖼️ 开始保存图片识别数据:")
-                logger.info(f"   销售人员ID: {salesperson_id}")
-                logger.info(f"   上传日期: {today}")
-                logger.info(f"   处理图片数: {processing_results.get('total_images_processed', 0)}")
-                logger.info(f"   发现通话数: {processing_results.get('total_calls_found', 0)}")
-                logger.info(f"   有效通话数: {processing_results.get('total_effective_calls', 0)}")
-                logger.info(f"   操作模式: {upload_choice}")
-                
-                # 使用局部变量来避免重新赋值问题
-                current_upload_choice = upload_choice
-                
-                # 获取 call_details 格式的数据
-                call_details_list = processing_results.get("call_details_list", [])
-                
-                if not call_details_list:
-                    logger.info("📊 没有发现有效的通话记录")
-                    return True
-                
-                # 📌 参考录音板块逻辑：处理现有记录
-                existing_record = await db.get_daily_record(salesperson_id, today)
-                
-                # 处理覆盖模式
-                if current_upload_choice == "overwrite" and existing_record:
-                    logger.warning(f"⚠️ 覆盖模式：准备删除销售人员 {salesperson_id} 在 {today} 的现有记录")
-                    logger.warning(f"   即将删除的记录ID: {existing_record['id']}")
+        def _save():
+            async def _async_save():
+                db = DatabaseManager(self.config)
+                await db.initialize()
+                try:
+                    today = date.today()
                     
-                    # 查询将要删除的详情数量
-                    async with db.acquire() as conn:
-                        details_to_delete = await conn.fetchval(
-                            "SELECT COUNT(*) FROM call_details WHERE daily_record_id = $1",
-                            existing_record['id']
-                        )
-                    logger.warning(f"   将删除 {details_to_delete} 条通话详情")
+                    logger.info(f"🖼️ 开始保存图片识别数据:")
+                    logger.info(f"   销售人员ID: {salesperson_id}")
+                    logger.info(f"   上传日期: {today}")
+                    logger.info(f"   处理图片数: {processing_results.get('total_images_processed', 0)}")
+                    logger.info(f"   发现通话数: {processing_results.get('total_calls_found', 0)}")
+                    logger.info(f"   有效通话数: {processing_results.get('total_effective_calls', 0)}")
+                    logger.info(f"   操作模式: {upload_choice}")
                     
-                    # 执行删除操作
-                    await db.delete_daily_record_and_details(existing_record['id'])
-                    existing_record = None  # 重置现有记录状态
-                
-                # 获取或创建日常记录
-                if existing_record and current_upload_choice == "append":
-                    daily_record_id = existing_record['id']
-                    logger.info(f"📝 使用现有记录 (追加模式): ID {daily_record_id}")
-                elif existing_record and current_upload_choice is None:
-                    # 如果存在记录但没有指定操作模式，默认使用追加模式
-                    daily_record_id = existing_record['id']
-                    logger.info(f"📝 使用现有记录 (默认追加模式): ID {daily_record_id}")
-                    current_upload_choice = "append"  # 设置为追加模式
-                else:
-                    # 创建新记录（没有现有记录或覆盖模式删除后）
-                    daily_record_id = await db.create_daily_record(salesperson_id, today)
-                    logger.info(f"📝 创建新记录: ID {daily_record_id}")
-                
-                # 准备统计数据
-                total_calls = len(call_details_list)
-                effective_calls = sum(1 for detail in call_details_list if detail.get('is_effective', False))
-                
-                logger.info(f"📈 图片识别统计信息:")
-                logger.info(f"   总通话数: {total_calls}")
-                logger.info(f"   有效通话数: {effective_calls}")
-                logger.info(f"   图片识别不使用评分字段")
-                
-                # 批量插入通话详情到call_details表
-                if call_details_list:
-                    await db.batch_insert_call_details(
-                        daily_record_id,
-                        salesperson_id,
-                        call_details_list,
-                        record_type='image'  # 标记为图片类型
-                    )
-                    logger.info(f"✅ 成功插入 {len(call_details_list)} 条图片通话详情")
-                
-                # 图片识别不计算平均分
-                average_score = None
-                logger.info(f"📊 图片识别模式：不使用评分字段")
-                
-                # 生成简单的汇总分析
-                summary_analysis = generate_image_summary_analysis(call_details_list, processing_results)
-                improvement_suggestions = None  # 图片识别暂不生成改进建议
-                
-                # 如果是追加模式，需要合并统计数据
-                if existing_record and current_upload_choice == "append":
-                    logger.info(f"🔄 追加模式：合并统计数据")
+                    # 使用局部变量来避免重新赋值问题
+                    current_upload_choice = upload_choice
                     
-                    old_total = existing_record.get('total_calls', 0)
-                    old_effective = existing_record.get('effective_calls', 0)
-                    old_avg = existing_record.get('average_score')
+                    # 获取 call_details 格式的数据
+                    call_details_list = processing_results.get("call_details_list", [])
                     
-                    logger.info(f"   原有数据: {old_total} 通话, {old_effective} 有效, 平均分 {old_avg}")
-                    logger.info(f"   新增数据: {total_calls} 通话, {effective_calls} 有效")
+                    if not call_details_list:
+                        logger.info("📊 没有发现有效的通话记录")
+                        return True
                     
-                    # 合并统计数据
-                    total_calls += old_total
-                    effective_calls += old_effective
+                    # 📌 参考录音板块逻辑：处理现有记录
+                    existing_record = await db.get_daily_record(salesperson_id, today)
                     
-                    logger.info(f"   合并后: {total_calls} 通话, {effective_calls} 有效")
+                    # 处理覆盖模式
+                    if current_upload_choice == "overwrite" and existing_record:
+                        logger.warning(f"⚠️ 覆盖模式：准备删除销售人员 {salesperson_id} 在 {today} 的现有记录")
+                        logger.warning(f"   即将删除的记录ID: {existing_record['id']}")
+                        
+                        # 查询将要删除的详情数量
+                        async with db.acquire() as conn:
+                            details_to_delete = await conn.fetchval(
+                                "SELECT COUNT(*) FROM call_details WHERE daily_record_id = $1",
+                                existing_record['id']
+                            )
+                        logger.warning(f"   将删除 {details_to_delete} 条通话详情")
+                        
+                        # 执行删除操作
+                        await db.delete_daily_record_and_details(existing_record['id'])
+                        existing_record = None  # 重置现有记录状态
                     
-                    # 图片识别不重新计算平均分（保持原有的平均分）
-                    if old_avg:
-                        logger.info(f"   保持原有平均分: {old_avg} (图片识别不影响平均分计算)")
-                        average_score = old_avg
+                    # 获取或创建日常记录
+                    if existing_record and current_upload_choice == "append":
+                        daily_record_id = existing_record['id']
+                        logger.info(f"📝 使用现有记录 (追加模式): ID {daily_record_id}")
+                    elif existing_record and current_upload_choice is None:
+                        # 如果存在记录但没有指定操作模式，默认使用追加模式
+                        daily_record_id = existing_record['id']
+                        logger.info(f"📝 使用现有记录 (默认追加模式): ID {daily_record_id}")
+                        current_upload_choice = "append"  # 设置为追加模式
                     else:
-                        logger.info(f"   图片识别模式：不计算平均分")
-                        average_score = None
-                
-                # 确定是否需要合并分析结果
-                should_merge_analysis = (current_upload_choice == "append" and existing_record is not None)
-                logger.info(f"📊 分析结果合并设置: {should_merge_analysis}")
-                
-                # 更新日常记录统计信息
-                await db.update_daily_record_stats(
-                    daily_record_id,
-                    total_calls,
-                    effective_calls,
-                    average_score,
-                    summary_analysis,
-                    improvement_suggestions,
-                    merge_analysis=should_merge_analysis
-                )
-                
-                # 处理错误信息记录
-                errors = processing_results.get("processing_errors", [])
-                if errors:
-                    logger.warning(f"⚠️ 有 {len(errors)} 张图片处理失败:")
-                    for error in errors:
-                        logger.warning(f"   - {error.get('filename', 'Unknown')}: {error.get('error', 'Unknown error')}")
-                
-                logger.info(f"✅ 图片识别数据保存完成：{total_calls} 个通话，{effective_calls} 个有效通话")
-                return True
-                
-            except Exception as e:
-                logger.error(f"❌ 保存图片识别数据时出错: {str(e)}")
-                import traceback
-                traceback.print_exc()
-                return False
-            finally:
-                await db.close()
+                        # 创建新记录（没有现有记录或覆盖模式删除后）
+                        daily_record_id = await db.create_daily_record(salesperson_id, today)
+                        logger.info(f"📝 创建新记录: ID {daily_record_id}")
+                    
+                    # 准备统计数据
+                    total_calls = len(call_details_list)
+                    effective_calls = sum(1 for detail in call_details_list if detail.get('is_effective', False))
+                    
+                    logger.info(f"📈 图片识别统计信息:")
+                    logger.info(f"   总通话数: {total_calls}")
+                    logger.info(f"   有效通话数: {effective_calls}")
+                    logger.info(f"   图片识别不使用评分字段")
+                    
+                    # 批量插入通话详情到call_details表
+                    if call_details_list:
+                        await db.batch_insert_call_details(
+                            daily_record_id,
+                            salesperson_id,
+                            call_details_list,
+                            record_type='image'  # 标记为图片类型
+                        )
+                        logger.info(f"✅ 成功插入 {len(call_details_list)} 条图片通话详情")
+                    
+                    # 图片识别不计算平均分
+                    average_score = None
+                    logger.info(f"📊 图片识别模式：不使用评分字段")
+                    
+                    # 生成简单的汇总分析
+                    summary_analysis = generate_image_summary_analysis(call_details_list, processing_results)
+                    improvement_suggestions = None  # 图片识别暂不生成改进建议
+                    
+                    # 如果是追加模式，需要合并统计数据
+                    if existing_record and current_upload_choice == "append":
+                        logger.info(f"🔄 追加模式：合并统计数据")
+                        
+                        old_total = existing_record.get('total_calls', 0)
+                        old_effective = existing_record.get('effective_calls', 0)
+                        old_avg = existing_record.get('average_score')
+                        
+                        logger.info(f"   原有数据: {old_total} 通话, {old_effective} 有效, 平均分 {old_avg}")
+                        logger.info(f"   新增数据: {total_calls} 通话, {effective_calls} 有效")
+                        
+                        # 合并统计数据
+                        total_calls += old_total
+                        effective_calls += old_effective
+                        
+                        logger.info(f"   合并后: {total_calls} 通话, {effective_calls} 有效")
+                        
+                        # 图片识别不重新计算平均分（保持原有的平均分）
+                        if old_avg:
+                            logger.info(f"   保持原有平均分: {old_avg} (图片识别不影响平均分计算)")
+                            average_score = old_avg
+                        else:
+                            logger.info(f"   图片识别模式：不计算平均分")
+                            average_score = None
+                    
+                    # 确定是否需要合并分析结果
+                    should_merge_analysis = (current_upload_choice == "append" and existing_record is not None)
+                    logger.info(f"📊 分析结果合并设置: {should_merge_analysis}")
+                    
+                    # 更新日常记录统计信息
+                    await db.update_daily_record_stats(
+                        daily_record_id,
+                        total_calls,
+                        effective_calls,
+                        average_score,
+                        summary_analysis,
+                        improvement_suggestions,
+                        merge_analysis=should_merge_analysis
+                    )
+                    
+                    # 处理错误信息记录
+                    errors = processing_results.get("processing_errors", [])
+                    if errors:
+                        logger.warning(f"⚠️ 有 {len(errors)} 张图片处理失败:")
+                        for error in errors:
+                            logger.warning(f"   - {error.get('filename', 'Unknown')}: {error.get('error', 'Unknown error')}")
+                    
+                    logger.info(f"✅ 图片识别数据保存完成：{total_calls} 个通话，{effective_calls} 个有效通话")
+                    return True
+                    
+                except Exception as e:
+                    logger.error(f"❌ 保存图片识别数据时出错: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
+                finally:
+                    await db.close()
+            return _async_save()
         
         return self._run_async(_save())
 
