@@ -84,21 +84,21 @@ DATABASE_CONFIG = {
 # OpenAI配置
 ROLE_IDENTIFY_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
-    "api_base": "https://api.pumpkinaigc.online/v1",
+    "api_base": st.secrets["BASE_URL"],
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.5  # 角色识别需要更确定的结果
 }
 
 CONVERSATION_ANALYSIS_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
-    "api_base": "https://api.pumpkinaigc.online/v1",
+    "api_base": st.secrets["BASE_URL"],
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.68  # 对话分析需要一定的创造性
 }
 
 SUMMARY_ANALYSIS_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
-    "api_base": "https://api.pumpkinaigc.online/v1",
+    "api_base": st.secrets["BASE_URL"],
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.7  # 汇总分析也需要一定的创造性
 }
@@ -106,7 +106,7 @@ SUMMARY_ANALYSIS_CONFIG = {
 # 图片识别配置
 IMAGE_RECOGNITION_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
-    "api_base": "https://api.pumpkinaigc.online/v1",
+    "api_base": st.secrets["BASE_URL"],
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.1  # 图片识别需要精确性，降低随机性
 }
