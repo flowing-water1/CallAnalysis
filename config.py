@@ -1,6 +1,7 @@
 import os
 from typing import Dict, Any, List
 import base64
+import streamlit as st
 
 def decode_key(encoded_key: str) -> str:
     """解码加密的API密钥"""
@@ -53,7 +54,7 @@ DATABASE_CONFIG = {
     },
     
     # 当前使用的环境（可以切换为 'production' 或 'test'）
-    "current_env": "production",  # 数据库更新完成，恢复测试环境
+    "current_env": "test",  # 数据库更新完成，恢复测试环境
     
     # 连接池配置（通用）
     "pool_config": {
@@ -82,21 +83,21 @@ DATABASE_CONFIG = {
 
 # OpenAI配置
 ROLE_IDENTIFY_CONFIG = {
-    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
+    "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": "https://api.pumpkinaigc.online/v1",
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.5  # 角色识别需要更确定的结果
 }
 
 CONVERSATION_ANALYSIS_CONFIG = {
-    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
+    "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": "https://api.pumpkinaigc.online/v1",
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.68  # 对话分析需要一定的创造性
 }
 
 SUMMARY_ANALYSIS_CONFIG = {
-    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
+    "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": "https://api.pumpkinaigc.online/v1",
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.7  # 汇总分析也需要一定的创造性
@@ -104,7 +105,7 @@ SUMMARY_ANALYSIS_CONFIG = {
 
 # 图片识别配置
 IMAGE_RECOGNITION_CONFIG = {
-    "api_key": decode_key("c2stTDNidWl5TXZXOUdOMkRnTTM0QTY2MDViQzYwNDRmOWFCZDcxRTc1N0I2NjQ4Njg1"),
+    "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": "https://api.pumpkinaigc.online/v1",
     "model_name": "gemini-2.5-pro-preview-06-05",
     "temperature": 0.1  # 图片识别需要精确性，降低随机性
