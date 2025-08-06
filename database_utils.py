@@ -302,7 +302,11 @@ class DatabaseManager:
         average_score: Optional[float],
         summary_analysis: Optional[str],
         improvement_suggestions: Optional[str],
-        merge_analysis: bool = False
+        merge_analysis: bool = False,
+        audio_calls: Optional[int] = None,
+        audio_effective_calls: Optional[int] = None,
+        image_calls: Optional[int] = None,
+        image_effective_calls: Optional[int] = None
     ):
         """
         更新日常记录的统计信息
@@ -315,6 +319,10 @@ class DatabaseManager:
             summary_analysis: 汇总分析
             improvement_suggestions: 改进建议
             merge_analysis: 是否合并分析结果（追加模式时使用）
+            audio_calls: 音频通话数（可选，如果提供则更新）
+            audio_effective_calls: 音频有效通话数（可选，如果提供则更新）
+            image_calls: 图片通话数（可选，如果提供则更新）
+            image_effective_calls: 图片有效通话数（可选，如果提供则更新）
         """
         async with self.acquire() as conn:
             if merge_analysis:
@@ -393,21 +401,67 @@ class DatabaseManager:
                     summary_analysis = merged_summary
                     improvement_suggestions = merged_suggestions
             
-            # 更新记录
-            await conn.execute(
-                """
+            # 构建动态更新SQL，包含分类统计字段
+            update_fields = [
+                "total_calls = $2",
+                "effective_calls = $3", 
+                "average_score = $4",
+                "summary_analysis = $5",
+                "improvement_suggestions = $6",
+                "updated_at = CURRENT_TIMESTAMP"
+            ]
+            update_values = [daily_record_id, total_calls, effective_calls, 
+                           average_score, summary_analysis, improvement_suggestions]
+            
+            param_count = 6
+            
+            # 如果提供了分类统计数据，也更新这些字段
+            if audio_calls is not None:
+                param_count += 1
+                update_fields.append(f"audio_calls = ${param_count}")
+                update_values.append(audio_calls)
+                
+            if audio_effective_calls is not None:
+                param_count += 1
+                update_fields.append(f"audio_effective_calls = ${param_count}")
+                update_values.append(audio_effective_calls)
+                
+            if image_calls is not None:
+                param_count += 1
+                update_fields.append(f"image_calls = ${param_count}")
+                update_values.append(image_calls)
+                
+            if image_effective_calls is not None:
+                param_count += 1
+                update_fields.append(f"image_effective_calls = ${param_count}")
+                update_values.append(image_effective_calls)
+            
+            # 构建最终SQL
+            sql = f"""
                 UPDATE daily_call_records 
-                SET total_calls = $2,
-                    effective_calls = $3,
-                    average_score = $4,
-                    summary_analysis = $5,
-                    improvement_suggestions = $6,
-                    updated_at = CURRENT_TIMESTAMP
+                SET {', '.join(update_fields)}
                 WHERE id = $1
-                """,
-                daily_record_id, total_calls, effective_calls, 
-                average_score, summary_analysis, improvement_suggestions
-            )
+            """
+            
+            logger.info(f"📊 更新统计数据: 总通话={total_calls}, 有效={effective_calls}, "
+                       f"音频={audio_calls}, 音频有效={audio_effective_calls}, "
+                       f"图片={image_calls}, 图片有效={image_effective_calls}")
+            
+            # 执行更新
+            await conn.execute(sql, *update_values)
+            
+            # 验证数据一致性（CHECK约束检查）
+            if (audio_calls is not None and image_calls is not None and 
+                total_calls != (audio_calls + image_calls)):
+                logger.error(f"❌ 数据一致性错误: total_calls({total_calls}) != audio_calls({audio_calls}) + image_calls({image_calls})")
+                raise ValueError(f"总通话数不等于分类通话数之和: {total_calls} != {audio_calls} + {image_calls}")
+            
+            if (audio_effective_calls is not None and image_effective_calls is not None and 
+                effective_calls != (audio_effective_calls + image_effective_calls)):
+                logger.error(f"❌ 数据一致性错误: effective_calls({effective_calls}) != audio_effective_calls({audio_effective_calls}) + image_effective_calls({image_effective_calls})")
+                raise ValueError(f"有效通话数不等于分类有效通话数之和: {effective_calls} != {audio_effective_calls} + {image_effective_calls}")
+            
+            logger.info("✅ 统计数据更新成功，数据一致性验证通过")
     
     async def update_image_call_statistics(
         self,
@@ -1041,16 +1095,46 @@ class SyncDatabaseManager:
                 should_merge_analysis = (current_upload_choice == "append" and existing_record is not None)
                 logger.info(f"📊 分析结果合并设置: {should_merge_analysis}")
                 
-                # 更新日常记录统计信息
-                await db.update_daily_record_stats(
-                    daily_record_id,
-                    total_calls,
-                    effective_calls,
-                    average_score,
-                    summary_analysis,
-                    improvement_suggestions,
-                    merge_analysis=should_merge_analysis
-                )
+                # 更新日常记录统计信息（音频处理）
+                if current_upload_choice == "append" and existing_record:
+                    # 追加模式：只传递总计数据，让方法自己处理分类统计的增量
+                    await db.update_daily_record_stats(
+                        daily_record_id,
+                        total_calls,
+                        effective_calls,
+                        average_score,
+                        summary_analysis,
+                        improvement_suggestions,
+                        merge_analysis=should_merge_analysis
+                    )
+                    # 追加模式下单独更新音频统计字段
+                    async with db.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE daily_call_records 
+                            SET audio_calls = COALESCE(audio_calls, 0) + $2,
+                                audio_effective_calls = COALESCE(audio_effective_calls, 0) + $3,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = $1
+                            """,
+                            daily_record_id, len(call_details_list), effective_calls - old_effective
+                        )
+                        logger.info(f"📊 追加模式：更新音频统计 +{len(call_details_list)} 通话, +{effective_calls - old_effective} 有效")
+                else:
+                    # 新记录或覆盖模式：直接设置分类统计字段
+                    await db.update_daily_record_stats(
+                        daily_record_id,
+                        total_calls,
+                        effective_calls,
+                        average_score,
+                        summary_analysis,
+                        improvement_suggestions,
+                        merge_analysis=should_merge_analysis,
+                        audio_calls=len(call_details_list),  # 音频通话数等于详情列表长度
+                        audio_effective_calls=effective_calls,  # 音频有效通话数
+                        image_calls=0,  # 音频处理时图片通话为0
+                        image_effective_calls=0  # 音频处理时图片有效通话为0
+                    )
                 
                 # 最终验证：检查保存后的状态
                 async with db.acquire() as conn:
@@ -1181,6 +1265,7 @@ class SyncDatabaseManager:
                 improvement_suggestions = None  # 图片识别暂不生成改进建议
                 
                 # 如果是追加模式，需要合并统计数据
+                old_effective = 0  # 初始化变量（用于后续计算增量）
                 if existing_record and current_upload_choice == "append":
                     logger.info(f"🔄 追加模式：合并统计数据")
                     
@@ -1209,16 +1294,46 @@ class SyncDatabaseManager:
                 should_merge_analysis = (current_upload_choice == "append" and existing_record is not None)
                 logger.info(f"📊 分析结果合并设置: {should_merge_analysis}")
                 
-                # 更新日常记录统计信息
-                await db.update_daily_record_stats(
-                    daily_record_id,
-                    total_calls,
-                    effective_calls,
-                    average_score,
-                    summary_analysis,
-                    improvement_suggestions,
-                    merge_analysis=should_merge_analysis
-                )
+                # 更新日常记录统计信息（图片处理）
+                if current_upload_choice == "append" and existing_record:
+                    # 追加模式：只传递总计数据，让方法自己处理分类统计的增量
+                    await db.update_daily_record_stats(
+                        daily_record_id,
+                        total_calls,
+                        effective_calls,
+                        average_score,
+                        summary_analysis,
+                        improvement_suggestions,
+                        merge_analysis=should_merge_analysis
+                    )
+                    # 追加模式下单独更新图片统计字段
+                    async with db.acquire() as conn:
+                        await conn.execute(
+                            """
+                            UPDATE daily_call_records 
+                            SET image_calls = COALESCE(image_calls, 0) + $2,
+                                image_effective_calls = COALESCE(image_effective_calls, 0) + $3,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = $1
+                            """,
+                            daily_record_id, len(call_details_list), effective_calls - old_effective
+                        )
+                        logger.info(f"📊 追加模式：更新图片统计 +{len(call_details_list)} 通话, +{effective_calls - old_effective} 有效")
+                else:
+                    # 新记录或覆盖模式：直接设置分类统计字段
+                    await db.update_daily_record_stats(
+                        daily_record_id,
+                        total_calls,
+                        effective_calls,
+                        average_score,
+                        summary_analysis,
+                        improvement_suggestions,
+                        merge_analysis=should_merge_analysis,
+                        audio_calls=0,  # 图片处理时音频通话为0
+                        audio_effective_calls=0,  # 图片处理时音频有效通话为0
+                        image_calls=len(call_details_list),  # 图片通话数等于详情列表长度
+                        image_effective_calls=effective_calls  # 图片有效通话数
+                    )
                 
                 # 处理错误信息记录
                 errors = processing_results.get("processing_errors", [])
