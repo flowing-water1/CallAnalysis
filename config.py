@@ -85,21 +85,21 @@ DATABASE_CONFIG = {
 ROLE_IDENTIFY_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": st.secrets["BASE_URL"],
-    "model_name": "gemini-2.5-pro-preview-06-05",
+    "model_name": "gemini-2.5-pro-preview-05-06",
     "temperature": 0.5  # 角色识别需要更确定的结果
 }
 
 CONVERSATION_ANALYSIS_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": st.secrets["BASE_URL"],
-    "model_name": "gemini-2.5-pro-preview-06-05",
+    "model_name": "gemini-2.5-pro-preview-05-06",
     "temperature": 0.68  # 对话分析需要一定的创造性
 }
 
 SUMMARY_ANALYSIS_CONFIG = {
     "api_key": st.secrets["MAIN_API_KEY"],
     "api_base": st.secrets["BASE_URL"],
-    "model_name": "gemini-2.5-pro-preview-06-05",
+    "model_name": "gemini-2.5-pro-preview-05-06",
     "temperature": 0.7  # 汇总分析也需要一定的创造性
 }
 
