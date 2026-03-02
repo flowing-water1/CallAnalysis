@@ -104,3 +104,4 @@ openpyxl
 asyncpg
 tos
 ffmpeg-python
+setuptools>=65.0.0
