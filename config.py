@@ -68,8 +68,8 @@ DATABASE_CONFIG = {
     
     # SSL配置（生产环境建议开启）
     "ssl_config": {
-        "ssl": "prefer",  # 可选值: disable, allow, prefer, require, verify-ca, verify-full
-        "sslmode": "prefer"
+        "ssl": "disable",  # 当前数据库服务器不支持SSL升级，必须显式禁用
+        "sslmode": "disable"
     },
     
     # 连接选项
@@ -158,5 +158,8 @@ EXCEL_CONFIG = {
 def get_current_db_config():
     """获取当前环境的数据库配置"""
     env = DATABASE_CONFIG["current_env"]
-    return DATABASE_CONFIG[env]
-
+    env_config = dict(DATABASE_CONFIG[env])
+    env_config["pool_config"] = dict(DATABASE_CONFIG.get("pool_config", {}))
+    env_config["ssl_config"] = dict(DATABASE_CONFIG.get("ssl_config", {}))
+    env_config["connect_args"] = dict(DATABASE_CONFIG.get("connect_args", {}))
+    return env_config
