@@ -33,6 +33,13 @@ class DatabaseManager:
     async def initialize(self):
         """初始化数据库连接池并确保数据库结构完整"""
         if self._pool is None:
+            server_settings = {
+                'timezone': 'Asia/Shanghai',  # 设置服务器时区
+                'jit': 'off',
+                'application_name': 'call_analysis_app'
+            }
+            server_settings.update(self.config.get('connect_args', {}).get('server_settings', {}))
+
             # 连接参数，添加时区设置
             connect_kwargs = {
                 'host': self.config['host'],
@@ -40,13 +47,13 @@ class DatabaseManager:
                 'database': self.config['database'],
                 'user': self.config['username'],
                 'password': self.config['password'],
-                'server_settings': {
-                    'timezone': 'Asia/Shanghai',  # 设置服务器时区
-                    'jit': 'off',
-                    'application_name': 'call_analysis_app'
-                },
+                'server_settings': server_settings,
                 **self.config.get('pool_config', {})
             }
+
+            ssl_config = self.config.get('ssl_config', {})
+            if 'ssl' in ssl_config:
+                connect_kwargs['ssl'] = ssl_config['ssl']
             
             # 创建连接池
             self._pool = await asyncpg.create_pool(**connect_kwargs)
